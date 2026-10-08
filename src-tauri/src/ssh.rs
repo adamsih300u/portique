@@ -250,6 +250,37 @@ pub async fn run_sftp(p: &Profile, params: Params, em: Emitter, rx: UnboundedRec
     res
 }
 
+/// Logs in like `run`, but instead of a shell offers a local SOCKS5 proxy that dials through this
+/// server. The API client sends requests through it to reach hosts only the server can see.
+/// Reports `{"port": n}` as a `proxy` status once ready, then runs until closed or the link dies.
+pub async fn run_proxy(p: &Profile, params: Params, em: Emitter, mut rx: UnboundedReceiver<Ctl>) -> Result<()> {
+    let remote = RemoteMap::default();
+    let mut hops: Vec<Hop> = Vec::new();
+    let mut session = dial(p, &params, &em, &remote, &mut hops, &mut vec![p.id.clone()]).await?;
+    authenticate(&mut session, p, &params).await?;
+    let session = Arc::new(session);
+
+    let (port, listener) = tunnel::socks_proxy(session.clone()).await.context("could not open a local proxy port")?;
+    em.status_json("proxy", json!({ "port": port }));
+    let res = loop {
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(Ctl::Close) | None => break Ok(()),
+                Some(_) => {}
+            },
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                if session.is_closed() { break Err(ConnectionLost.into()); }
+            }
+        }
+    };
+    listener.abort();
+    let _ = session.disconnect(Disconnect::ByApplication, "", "en").await;
+    for hop in hops.iter().rev() {
+        let _ = hop.disconnect(Disconnect::ByApplication, "", "en").await;
+    }
+    res
+}
+
 async fn authenticate(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<()> {
     match p.auth_method {
         AuthMethod::Password => password_auth(s, p, params).await,

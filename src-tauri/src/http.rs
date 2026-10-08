@@ -36,6 +36,9 @@ pub enum Auth {
     Bearer { token: String },
     Basic { user: String, pass: String },
     Header { name: String, value: String },
+    /// OAuth 2.0 client credentials: a token is fetched (and cached until it expires) before the request.
+    #[serde(rename = "oauth2", rename_all = "camelCase")]
+    OAuth2 { token_url: String, client_id: String, client_secret: String, scope: String },
 }
 
 #[derive(Deserialize, Debug)]
@@ -58,6 +61,9 @@ pub struct Request {
     pub env_id: String,
     /// The environment's plain variables.
     pub vars: HashMap<String, String>,
+    /// Send through the SOCKS5 proxy on this local port (an SSH session, see `ssh::run_proxy`).
+    #[serde(default)]
+    pub proxy_port: Option<u16>,
 }
 
 #[derive(Serialize, Debug)]
@@ -151,6 +157,15 @@ struct Prepared {
     url: String,
     headers: reqwest::header::HeaderMap,
     body: Body,
+    oauth: Option<OAuth>,
+}
+
+#[derive(Debug, Clone)]
+struct OAuth {
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    scope: String,
 }
 
 fn prepare(req: &Request) -> Result<Prepared> {
@@ -183,6 +198,7 @@ fn prepare(req: &Request) -> Result<Prepared> {
             let raw = format!("{}:{}", x.expand(user)?, x.expand(pass)?);
             set(&mut headers, AUTHORIZATION, format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(raw)))?;
         }
+        Auth::OAuth2 { .. } => {} // handled in `execute`, once the token has been fetched
         Auth::Header { name, value } => {
             let (n, v) = (x.expand(name)?, x.expand(value)?);
             if !n.trim().is_empty() {
@@ -190,6 +206,15 @@ fn prepare(req: &Request) -> Result<Prepared> {
                 set(&mut headers, name, v)?;
             }
         }
+    }
+    let mut oauth = None;
+    if let Auth::OAuth2 { token_url, client_id, client_secret, scope } = &req.auth {
+        oauth = Some(OAuth {
+            token_url: x.expand(token_url)?.trim().to_string(),
+            client_id: x.expand(client_id)?,
+            client_secret: x.expand(client_secret)?,
+            scope: x.expand(scope)?.trim().to_string(),
+        });
     }
     let body = match &req.body {
         Body::None => Body::None,
@@ -213,7 +238,13 @@ fn prepare(req: &Request) -> Result<Prepared> {
     if url.trim_start_matches(|c| c != ':').len() <= 3 {
         bail!("Enter a URL to send the request to.");
     }
-    Ok(Prepared { method, url, headers, body })
+    if let Some(o) = &mut oauth {
+        if o.token_url.is_empty() {
+            bail!("Enter the token URL to sign in with OAuth 2.0.");
+        }
+        o.token_url = with_scheme(&o.token_url);
+    }
+    Ok(Prepared { method, url, headers, body, oauth })
 }
 
 // ---------------------------------------------------------------- sending
@@ -233,7 +264,7 @@ pub fn cancel(id: &str) {
 pub async fn send(req: Request) -> Result<Response> {
     let prepared = prepare(&req)?; // before any await: the vault guard must not be held across one
     let id = req.id.clone();
-    let task = tokio::spawn(execute(prepared, req.insecure, req.follow_redirects, req.timeout_secs));
+    let task = tokio::spawn(execute(prepared, req.insecure, req.follow_redirects, req.timeout_secs, req.proxy_port));
     running(|m| m.insert(id.clone(), task.abort_handle()));
     let out = task.await;
     running(|m| m.remove(&id));
@@ -244,25 +275,43 @@ pub async fn send(req: Request) -> Result<Response> {
     }
 }
 
-async fn execute(p: Prepared, insecure: bool, follow: bool, timeout_secs: u64) -> Result<Response> {
-    let client = reqwest::Client::builder()
+async fn execute(p: Prepared, insecure: bool, follow: bool, timeout_secs: u64, proxy: Option<u16>) -> Result<Response> {
+    use reqwest::header::{HeaderValue, AUTHORIZATION};
+    let mut cb = reqwest::Client::builder()
         .user_agent(concat!("Portique/", env!("CARGO_PKG_VERSION")))
         .redirect(if follow { reqwest::redirect::Policy::limited(10) } else { reqwest::redirect::Policy::none() })
         .danger_accept_invalid_certs(insecure)
-        .timeout(Duration::from_secs(timeout_secs.clamp(1, 3600)))
-        .build()
-        .context("could not set up the HTTP client")?;
-    let mut rb = client.request(p.method, &p.url).headers(p.headers);
+        .timeout(Duration::from_secs(timeout_secs.clamp(1, 3600)));
+    if let Some(port) = proxy {
+        // socks5h: names are resolved by the SSH server, so hosts only it can see work.
+        cb = cb.proxy(reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}")).context("bad proxy address")?);
+    }
+    let client = cb.build().context("could not set up the HTTP client")?;
+    let via = proxy.is_some();
+    let mut headers = p.headers;
+    if let Some(o) = &p.oauth {
+        if !headers.contains_key(AUTHORIZATION) {
+            let (kind, token) = oauth_token(&client, o, insecure, via).await?;
+            let value = HeaderValue::from_str(&format!("{kind} {token}")).context("the token has characters that aren't allowed in a header")?;
+            headers.insert(AUTHORIZATION, value);
+        }
+    }
+    let mut rb = client.request(p.method, &p.url).headers(headers);
     rb = match p.body {
         Body::None => rb,
         Body::Json { text } | Body::Text { text } => rb.body(text),
         Body::Form { pairs } => rb.form(&pairs),
     };
     let started = Instant::now();
-    let mut resp = rb.send().await.map_err(|e| explain(e, insecure))?;
+    let mut resp = rb.send().await.map_err(|e| explain(e, insecure, via))?;
     let head_millis = started.elapsed().as_millis() as u64;
 
     let status = resp.status();
+    if status.as_u16() == 401 {
+        if let Some(o) = &p.oauth {
+            forget_token(o); // the server no longer accepts it: sign in afresh next time
+        }
+    }
     let headers = resp
         .headers()
         .iter()
@@ -273,7 +322,7 @@ async fn execute(p: Prepared, insecure: bool, follow: bool, timeout_secs: u64) -
 
     let mut bytes: Vec<u8> = Vec::new();
     let mut truncated = false;
-    while let Some(chunk) = resp.chunk().await.map_err(|e| explain(e, insecure))? {
+    while let Some(chunk) = resp.chunk().await.map_err(|e| explain(e, insecure, via))? {
         let room = MAX_BODY - bytes.len();
         bytes.extend_from_slice(&chunk[..chunk.len().min(room)]);
         if chunk.len() > room {
@@ -310,8 +359,68 @@ async fn execute(p: Prepared, insecure: bool, follow: bool, timeout_secs: u64) -
     })
 }
 
+// ---------------------------------------------------------------- OAuth 2.0
+
+/// Cached access tokens: key -> (token type, token, good until). Memory only; never written to disk.
+static TOKENS: Mutex<Option<HashMap<String, (String, String, Instant)>>> = Mutex::new(None);
+
+fn token_key(o: &OAuth) -> String {
+    format!("{}\n{}\n{}\n{}", o.token_url, o.client_id, o.client_secret, o.scope)
+}
+
+fn forget_token(o: &OAuth) {
+    if let Some(m) = TOKENS.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+        m.remove(&token_key(o));
+    }
+}
+
+/// Signs in with the client-credentials grant, reusing a still-valid token from an earlier request.
+async fn oauth_token(client: &reqwest::Client, o: &OAuth, insecure: bool, via_ssh: bool) -> Result<(String, String)> {
+    let key = token_key(o);
+    {
+        let cache = TOKENS.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((kind, token, until)) = cache.as_ref().and_then(|m| m.get(&key)) {
+            if *until > Instant::now() + Duration::from_secs(30) {
+                return Ok((kind.clone(), token.clone()));
+            }
+        }
+    }
+    let mut form = vec![("grant_type", "client_credentials")];
+    if !o.scope.is_empty() {
+        form.push(("scope", o.scope.as_str()));
+    }
+    let resp = client
+        .post(&o.token_url)
+        .basic_auth(&o.client_id, Some(&o.client_secret))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| explain(e, insecure, via_ssh))
+        .context("OAuth sign-in failed")?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    if !status.is_success() {
+        let why = json["error_description"].as_str().or(json["error"].as_str()).map(str::to_string).unwrap_or_else(|| text.chars().take(200).collect());
+        bail!("OAuth sign-in failed: the server answered {status}{}", if why.is_empty() { String::new() } else { format!(" ({why})") });
+    }
+    let token = json["access_token"].as_str().filter(|t| !t.is_empty()).ok_or_else(|| anyhow!("OAuth sign-in failed: the answer has no access_token"))?;
+    let kind = match json["token_type"].as_str() {
+        Some(k) if !k.eq_ignore_ascii_case("bearer") && !k.is_empty() => k.to_string(),
+        _ => "Bearer".to_string(),
+    };
+    let ttl = json["expires_in"].as_u64().unwrap_or(300).clamp(1, 24 * 3600);
+    TOKENS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(key, (kind.clone(), token.to_string(), Instant::now() + Duration::from_secs(ttl)));
+    Ok((kind, token.to_string()))
+}
+
 /// Turns a transport error into something a person can act on.
-fn explain(e: reqwest::Error, insecure: bool) -> anyhow::Error {
+fn explain(e: reqwest::Error, insecure: bool, via_ssh: bool) -> anyhow::Error {
     let chain = {
         let mut parts = vec![e.to_string()];
         let mut src = std::error::Error::source(&e);
@@ -326,6 +435,8 @@ fn explain(e: reqwest::Error, insecure: bool) -> anyhow::Error {
         anyhow!("The request timed out. The server didn't answer in time.")
     } else if !insecure && (lower.contains("certificate") || lower.contains("unknownissuer") || lower.contains("invalid peer")) {
         anyhow!("{chain}\n\nThe server's certificate isn't trusted. For a test server with a self-signed certificate, turn on “Allow self-signed certificates” under Options.")
+    } else if e.is_connect() && via_ssh {
+        anyhow!("Could not connect through the SSH host: {chain}\n\nThe address may be unreachable from the server, or its name may not resolve there.")
     } else if e.is_connect() {
         anyhow!("Could not connect: {chain}")
     } else {
@@ -350,6 +461,7 @@ mod tests {
             timeout_secs: 5,
             env_id: String::new(),
             vars: HashMap::from([("host".to_string(), "example.com".to_string()), ("id".to_string(), "42".to_string())]),
+            proxy_port: None,
         }
     }
 
@@ -438,5 +550,141 @@ mod tests {
 
         let refused = send(req("127.0.0.1:1")).await.unwrap_err().to_string();
         assert!(refused.starts_with("Could not connect"), "{refused}");
+    }
+
+    /// A throwaway HTTP server: `handler(request_text) -> response_text`. Returns its port.
+    async fn serve(handler: impl Fn(String) -> String + Send + Sync + 'static) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handler = std::sync::Arc::new(handler);
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let handler = handler.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16384];
+                    let n = s.read(&mut buf).await.unwrap_or(0);
+                    let reply = handler(String::from_utf8_lossy(&buf[..n]).to_string());
+                    let _ = s.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        port
+    }
+
+    fn ok_json(body: &str) -> String {
+        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+    }
+
+    #[tokio::test]
+    async fn oauth_signs_in_once_and_signs_in_again_after_a_401() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let logins = std::sync::Arc::new(AtomicUsize::new(0));
+        let l = logins.clone();
+        let port = serve(move |req| {
+            if req.starts_with("POST /token") {
+                let n = l.fetch_add(1, Ordering::SeqCst) + 1;
+                assert!(req.contains("grant_type=client_credentials") && req.contains("scope=read"), "{req}");
+                assert!(req.to_lowercase().contains("authorization: basic "), "{req}"); // client id + secret
+                ok_json(&format!(r#"{{"access_token":"tok{n}","token_type":"bearer","expires_in":3600}}"#))
+            } else if req.to_lowercase().contains("authorization: bearer tok1") && req.starts_with("GET /fine") {
+                ok_json(r#"{"ok":true}"#)
+            } else {
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+            }
+        })
+        .await;
+        let mut r = req(&format!("localhost:{port}/fine"));
+        r.auth = Auth::OAuth2 { token_url: format!("localhost:{port}/token"), client_id: "cid".into(), client_secret: "sec-oauth-test".into(), scope: "read".into() };
+        assert_eq!(send(r).await.unwrap().status, 200);
+        let mut r = req(&format!("localhost:{port}/fine"));
+        r.auth = Auth::OAuth2 { token_url: format!("localhost:{port}/token"), client_id: "cid".into(), client_secret: "sec-oauth-test".into(), scope: "read".into() };
+        assert_eq!(send(r).await.unwrap().status, 200);
+        assert_eq!(logins.load(Ordering::SeqCst), 1, "the second request should reuse the token");
+
+        // The API starts refusing the token: that request fails, and the next one signs in again.
+        let mut r = req(&format!("localhost:{port}/revoked"));
+        r.auth = Auth::OAuth2 { token_url: format!("localhost:{port}/token"), client_id: "cid".into(), client_secret: "sec-oauth-test".into(), scope: "read".into() };
+        assert_eq!(send(r).await.unwrap().status, 401);
+        let mut r = req(&format!("localhost:{port}/fine"));
+        r.auth = Auth::OAuth2 { token_url: format!("localhost:{port}/token"), client_id: "cid".into(), client_secret: "sec-oauth-test".into(), scope: "read".into() };
+        let _ = send(r).await; // tok2 isn't accepted by /fine; what matters is that a new sign-in happened
+        assert_eq!(logins.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn oauth_errors_are_explained() {
+        let port = serve(|_| "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 62\r\nConnection: close\r\n\r\n{\"error\":\"invalid_client\",\"error_description\":\"Unknown client\"} ".to_string()).await;
+        let mut r = req(&format!("localhost:{port}/x"));
+        r.auth = Auth::OAuth2 { token_url: format!("localhost:{port}/token"), client_id: "a".into(), client_secret: "b-err".into(), scope: String::new() };
+        let e = send(r).await.unwrap_err().to_string();
+        assert!(e.contains("OAuth sign-in failed") && e.contains("Unknown client"), "{e}");
+        let mut r = req("localhost:1/x");
+        r.auth = Auth::OAuth2 { token_url: String::new(), client_id: String::new(), client_secret: String::new(), scope: String::new() };
+        assert!(prepare(&r).unwrap_err().to_string().contains("token URL"));
+    }
+
+    /// A minimal SOCKS5 server that records what it was asked to connect to, then relays to `target`.
+    async fn socks_server(target: u16) -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{copy_bidirectional, AsyncReadExt, AsyncWriteExt};
+        let asked = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let log = asked.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let log = log.clone();
+                tokio::spawn(async move {
+                    let mut head = [0u8; 2];
+                    s.read_exact(&mut head).await.unwrap();
+                    let mut methods = vec![0u8; head[1] as usize];
+                    s.read_exact(&mut methods).await.unwrap();
+                    s.write_all(&[5, 0]).await.unwrap();
+                    let mut req = [0u8; 4];
+                    s.read_exact(&mut req).await.unwrap();
+                    let host = match req[3] {
+                        3 => {
+                            let mut len = [0u8; 1];
+                            s.read_exact(&mut len).await.unwrap();
+                            let mut name = vec![0u8; len[0] as usize];
+                            s.read_exact(&mut name).await.unwrap();
+                            String::from_utf8(name).unwrap()
+                        }
+                        _ => {
+                            let mut a = [0u8; 4];
+                            s.read_exact(&mut a).await.unwrap();
+                            std::net::Ipv4Addr::from(a).to_string()
+                        }
+                    };
+                    let mut p = [0u8; 2];
+                    s.read_exact(&mut p).await.unwrap();
+                    log.lock().unwrap().push(format!("{host}:{}", u16::from_be_bytes(p)));
+                    s.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+                    let mut up = tokio::net::TcpStream::connect(("127.0.0.1", target)).await.unwrap();
+                    let _ = copy_bidirectional(&mut s, &mut up).await;
+                });
+            }
+        });
+        (port, asked)
+    }
+
+    #[tokio::test]
+    async fn requests_can_go_through_a_socks_proxy_with_the_name_resolved_there() {
+        let target = serve(|req| ok_json(&format!("{{\"saw\":{:?}}}", req.lines().find(|l| l.to_lowercase().starts_with("host:")).unwrap_or("")))).await;
+        let (proxy, asked) = socks_server(target).await;
+        let mut r = req("http://only-the-server-knows.internal:8080/health");
+        r.proxy_port = Some(proxy);
+        let res = send(r).await.unwrap();
+        assert_eq!(res.status, 200);
+        assert!(res.body.contains("only-the-server-knows.internal:8080"), "{}", res.body);
+        // socks5h: the proxy got the name, not an address our machine resolved.
+        assert_eq!(asked.lock().unwrap().as_slice(), ["only-the-server-knows.internal:8080"]);
+
+        let mut r = req("http://nothing.internal/x");
+        r.proxy_port = Some(1); // nothing listens there
+        let e = send(r).await.unwrap_err().to_string();
+        assert!(e.starts_with("Could not connect through the SSH host"), "{e}");
     }
 }

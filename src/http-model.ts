@@ -10,7 +10,27 @@ export interface Pair {
 }
 
 export type BodyKind = "none" | "json" | "text" | "form";
-export type AuthKind = "none" | "bearer" | "basic" | "header";
+export type AuthKind = "none" | "bearer" | "basic" | "header" | "oauth2";
+
+/** One thing to verify about the response. */
+export interface Check {
+  on: boolean;
+  source: "status" | "header" | "json" | "body";
+  /** The header name or JSON field (`user.name`, `items[0].id`); unused for status and body. */
+  path: string;
+  op: "is" | "isnt" | "contains" | "exists" | "lt" | "gt";
+  value: string;
+}
+
+/** A value to take from the response and keep in the active environment as `{{name}}`. */
+export interface Capture {
+  on: boolean;
+  source: "json" | "header";
+  path: string;
+  name: string;
+  /** Keep it in the vault (for tokens) rather than in the environment file. */
+  secret: boolean;
+}
 
 export interface HttpRequest {
   id: string;
@@ -25,7 +45,23 @@ export interface HttpRequest {
   bodyKind: BodyKind;
   bodyText: string;
   form: Pair[];
-  auth: { kind: AuthKind; token: string; user: string; pass: string; name: string; value: string };
+  auth: {
+    kind: AuthKind;
+    token: string;
+    user: string;
+    pass: string;
+    name: string;
+    value: string;
+    /** OAuth 2.0 client credentials. */
+    tokenUrl: string;
+    clientId: string;
+    clientSecret: string;
+    scope: string;
+  };
+  /** Id of an SSH profile to send through ("" for this computer). */
+  via: string;
+  checks: Check[];
+  captures: Capture[];
   insecure: boolean;
   follow: boolean;
   timeout: number;
@@ -63,7 +99,10 @@ export function blankRequest(): HttpRequest {
     bodyKind: "none",
     bodyText: "",
     form: [],
-    auth: { kind: "none", token: "", user: "", pass: "", name: "", value: "" },
+    auth: { kind: "none", token: "", user: "", pass: "", name: "", value: "", tokenUrl: "", clientId: "", clientSecret: "", scope: "" },
+    via: "",
+    checks: [],
+    captures: [],
     insecure: false,
     follow: true,
     timeout: 30,
@@ -88,9 +127,24 @@ export function sanitizeRequest(raw: Partial<HttpRequest> | null | undefined): H
     form: pairs(r.form),
     bodyText: String(r.bodyText ?? ""),
     bodyKind: ["none", "json", "text", "form"].includes(r.bodyKind) ? r.bodyKind : "none",
-    auth: { ...b.auth, ...(r.auth ?? {}) },
+    auth: { ...b.auth, ...(r.auth ?? {}), kind: (["none", "bearer", "basic", "header", "oauth2"].includes(r.auth?.kind) ? r.auth.kind : "none") as AuthKind },
     timeout: Number(r.timeout) > 0 ? Number(r.timeout) : 30,
     insecure: r.insecure === true,
+    via: String(r.via ?? ""),
+    checks: (Array.isArray(r.checks) ? r.checks : []).filter((c) => c && typeof c === "object").map((c) => ({
+      on: c.on !== false,
+      source: (["status", "header", "json", "body"].includes(c.source) ? c.source : "status") as Check["source"],
+      path: String(c.path ?? ""),
+      op: (["is", "isnt", "contains", "exists", "lt", "gt"].includes(c.op) ? c.op : "is") as Check["op"],
+      value: String(c.value ?? ""),
+    })),
+    captures: (Array.isArray(r.captures) ? r.captures : []).filter((c) => c && typeof c === "object").map((c) => ({
+      on: c.on !== false,
+      source: (c.source === "header" ? "header" : "json") as Capture["source"],
+      path: String(c.path ?? ""),
+      name: String(c.name ?? ""),
+      secret: c.secret === true,
+    })),
     follow: r.follow !== false,
   };
 }

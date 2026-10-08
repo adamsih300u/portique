@@ -179,12 +179,19 @@ export interface HttpPayload {
   url: string;
   headers: [string, string][];
   body: { kind: "none" } | { kind: "json" | "text"; text: string } | { kind: "form"; pairs: [string, string][] };
-  auth: { kind: "none" } | { kind: "bearer"; token: string } | { kind: "basic"; user: string; pass: string } | { kind: "header"; name: string; value: string };
+  auth:
+    | { kind: "none" }
+    | { kind: "bearer"; token: string }
+    | { kind: "basic"; user: string; pass: string }
+    | { kind: "header"; name: string; value: string }
+    | { kind: "oauth2"; tokenUrl: string; clientId: string; clientSecret: string; scope: string };
   insecure: boolean;
   followRedirects: boolean;
   timeoutSecs: number;
   envId: string;
   vars: Record<string, string>;
+  /** Local SOCKS5 port of an SSH session to send through. */
+  proxyPort?: number;
 }
 
 export interface HttpResult {
@@ -260,6 +267,15 @@ export const api = {
   hasApiSecret: (envId: string, name: string) => guarded(() => invoke<boolean>("has_api_secret", { envId, name })),
   httpSend: (req: HttpPayload) => guarded(() => invoke<HttpResult>("http_send", { req })),
   httpCancel: (id: string) => invoke<void>("http_cancel", { id }),
+  connectProxy: (profileId: string, onEvent: Channel<ArrayBuffer>, password?: string, passphrase?: string) =>
+    invoke<string>("connect_proxy", { profileId, password: password ?? null, passphrase: passphrase ?? null, onEvent }),
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
+  writeTextFile: (path: string, content: string) => invoke<void>("write_text_file", { path, content }),
+  /** The system file chooser (the dialog plugin's own commands); null if cancelled. */
+  chooseFileToOpen: (filters: { name: string; extensions: string[] }[]) =>
+    invoke<string | null>("plugin:dialog|open", { options: { multiple: false, directory: false, filters } }),
+  chooseFileToSave: (defaultPath: string, filters: { name: string; extensions: string[] }[]) =>
+    invoke<string | null>("plugin:dialog|save", { options: { defaultPath, filters } }),
   confirmHost: (id: string, accept: boolean) => invoke<void>("confirm_host", { id, accept }),
   input: (id: string, data: Uint8Array) => invoke<void>("session_input", { id, data: Array.from(data) }),
   resize: (id: string, cols: number, rows: number) => invoke<void>("session_resize", { id, cols, rows }),
