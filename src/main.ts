@@ -1,6 +1,6 @@
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
-import emblem from "./assets/portique.svg";
+import { emblem } from "./emblem";
 import { api, Profile, Settings, setUnlockHook } from "./api";
 import { applyChrome, chromeDialog, DEFAULT_UI, PRESET_NAMES, presetUi } from "./chrome";
 import { FileTab } from "./file-tab";
@@ -47,7 +47,7 @@ const search = h("input", { class: "search", placeholder: "Search profiles…", 
 const tabBar = h("div", { class: "tabbar" }, ...windowControls());
 const stage = h("div", { class: "stage" });
 const empty = h("div", { class: "empty" },
-  h("img", { class: "emblem", src: emblem, alt: "", draggable: false }),
+  emblem("emblem"),
   h("h1", {}, "Portique"),
   h("p", { class: "tagline" }, "Your servers, within reach"),
   h("div", { class: "filet" }, "◆"),
@@ -83,7 +83,7 @@ const moreBtn = h("button", { class: "icon", title: "Menu and settings", onclick
 
 document.querySelector("#app")!.append(
   h("aside", {},
-    h("div", { class: "brand", "data-tauri-drag-region": true }, h("img", { src: emblem, alt: "", draggable: false }), h("span", {}, "Portique")),
+    h("div", { class: "brand", "data-tauri-drag-region": true }, emblem(), h("span", {}, "Portique")),
     h("div", { class: "side-head" },
       h("button", { class: "primary", onclick: () => void newProfile() }, "+ New"),
       h("button", { class: "icon", title: "Lock the vault now", onclick: async () => { await api.vaultLock(); await ensureUnlocked(); } }, "🔒"),

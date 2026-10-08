@@ -11,6 +11,7 @@
   /* Portique: bleu nuit, ivoire, laiton */
   --bg: #0f1420; --panel: #141a29; --panel2: #1b2336; --line: #283149; --text: #e4e1d6; --muted: #8b90a3;
   --s: 1; /* interface text scale: 1 normal, 1.2 large (Settings) */
+  --door: #0b0f19; --door-ink: #e9e4d6; /* the emblem's doorway; chrome.ts re-tints it with the interface colours */
   --accent: #c9a45c; --accent-hi: #dcbc7a; --on-accent: #10151f; --danger: #e5767a;
   --display: "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   color-scheme: dark; font: calc(13px * var(--s))/1.4 system-ui, "Segoe UI", sans-serif;
@@ -102,7 +103,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 ::selection { background: #c9a45c55; }
 .brand { display: flex; align-items: center; gap: 9px; padding: 12px 12px 4px; }
-.brand img { width: calc(24px * var(--s)); height: calc(24px * var(--s)); }
+.brand svg { flex: none; width: calc(24px * var(--s)); height: calc(24px * var(--s)); }
 .brand span { font: italic 500 calc(25px * var(--s))/1 var(--display); letter-spacing: .01em; color: var(--text); }
 .empty .emblem { width: 96px; height: 96px; margin: 0 auto 6px; opacity: .95; user-select: none; }
 .empty h1 { margin: 0; font: 500 calc(52px * var(--s))/1.05 var(--display); letter-spacing: .04em; color: var(--text); }
@@ -122,7 +123,7 @@ aside, .tabbar { color: var(--text); }
 .wc svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: square; }
 .wc:hover { background: var(--panel2); color: var(--text); border: 0; }
 .wc.close:hover { background: var(--danger); color: var(--on-accent); }
-.brand img, .brand span { pointer-events: none; }
+.brand svg, .brand span { pointer-events: none; }
 /* plain tabs: keep the interface colours instead of the terminal theme's */
 .plain-tabs .tab { --tab-bg: var(--panel2) !important; --tab-accent: var(--accent) !important; }
 /* ---- shortcuts footer and panel ---- */
