@@ -38,10 +38,10 @@ SSH integration tests (need local sshd instances, see `src-tauri/src/ssh.rs`; po
 ## Branches, builds and releases
 
 - `dev` is the integration branch; `main` is stable. Both are built by CI on every push and PR
-  (Linux x64 binary + Windows x64 `.exe`, uploaded as workflow artifacts).
+  (Linux x64 binary, AppImage and `.deb`, plus Windows x64 `.exe`, uploaded as workflow artifacts).
 - Commit messages / squash-merged PR titles follow [Conventional Commits](https://www.conventionalcommits.org/)
   (`feat:`, `fix:`, `feat!:` …); PR titles are checked by CI.
 - Merging `dev` into `main` triggers release-please, which opens/updates a **release PR** that bumps the
   version in `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` and updates `CHANGELOG.md`.
-  Merging that PR tags `vX.Y.Z`, creates the GitHub release and attaches the Linux and Windows builds with SHA-256 sums.
+  Merging that PR tags `vX.Y.Z`, creates the GitHub release and attaches the Linux (binary, AppImage, .deb) and Windows builds with SHA-256 sums.
 - Never edit the version by hand.

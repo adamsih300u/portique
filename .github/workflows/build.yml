@@ -59,8 +59,16 @@ jobs:
           npx tsc --noEmit
           cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Build executable
+      - name: Build executable (Windows)
+        if: runner.os == 'Windows'
         run: npx tauri build --no-bundle
+
+      - name: Build executable, AppImage and .deb (Linux)
+        if: runner.os == 'Linux'
+        env:
+          # linuxdeploy is itself an AppImage; run it without needing FUSE on the runner
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npx tauri build --bundles appimage,deb
 
       - name: Read version
         id: ver
@@ -68,27 +76,24 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Package
-        id: pkg
         shell: bash
         run: |
-          name="portique-${{ steps.ver.outputs.version }}${{ inputs.version-suffix }}-${{ matrix.name }}"
-          mkdir -p out
-          cp "src-tauri/target/release/${{ matrix.binary }}" out/
+          base="portique-${{ steps.ver.outputs.version }}${{ inputs.version-suffix }}"
+          rel=src-tauri/target/release
+          mkdir -p out release
+          cp "$rel/${{ matrix.binary }}" out/
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            (cd out && 7z a -tzip "../$name.zip" "${{ matrix.binary }}")
-            file="$name.zip"
+            (cd out && 7z a -tzip "../release/$base-${{ matrix.name }}.zip" "${{ matrix.binary }}")
           else
-            tar -C out -czf "$name.tar.gz" "${{ matrix.binary }}"
-            file="$name.tar.gz"
+            tar -C out -czf "release/$base-${{ matrix.name }}.tar.gz" "${{ matrix.binary }}"
+            cp "$rel"/bundle/appimage/*.AppImage "release/$base-linux-x64.AppImage"
+            cp "$rel"/bundle/deb/*.deb "release/$base-linux-x64.deb"
           fi
-          sha256sum "$file" > "$file.sha256"
-          echo "file=$file" >> "$GITHUB_OUTPUT"
+          cd release && sha256sum * > "SHA256SUMS-${{ matrix.name }}.txt"
 
       - uses: actions/upload-artifact@v4
         with:
           name: portique-${{ matrix.name }}
-          path: |
-            ${{ steps.pkg.outputs.file }}
-            ${{ steps.pkg.outputs.file }}.sha256
+          path: release/*
           if-no-files-found: error
           retention-days: 30
