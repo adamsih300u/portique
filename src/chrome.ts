@@ -34,7 +34,7 @@ const mix = (a: string, b: string, pct: number) => `color-mix(in srgb, ${a}, ${b
 function paintRegion(el: Element | null, bg: string, content = false) {
   const s = (el as HTMLElement | null)?.style;
   if (!s) return;
-  const props = ["--bg", "--panel", "--panel2", "--line", "--text", "--muted", "color-scheme"];
+  const props = ["--bg", "--panel", "--panel2", "--line", "--text", "--muted", "--door", "--door-ink", "color-scheme"];
   if (!bg) return props.forEach((p) => s.removeProperty(p));
   const light = isLight(bg);
   const text = light ? "#23252d" : "#e4e1d6";
@@ -45,6 +45,9 @@ function paintRegion(el: Element | null, bg: string, content = false) {
   s.setProperty("--line", mix(bg, text, 18));
   s.setProperty("--text", text);
   s.setProperty("--muted", mix(bg, text, 62));
+  // The emblem's doorway: dark ink on a light region, a deeper shade of the region on a dark one.
+  s.setProperty("--door", light ? text : mix(bg, "#000000", 55));
+  s.setProperty("--door-ink", light ? bg : text);
   s.setProperty("color-scheme", light ? "light" : "dark");
 }
 
