@@ -91,7 +91,7 @@ jobs:
           fi
           cd release && sha256sum * > "SHA256SUMS-${{ matrix.name }}.txt"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: portique-${{ matrix.name }}
           path: release/*
