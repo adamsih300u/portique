@@ -8,6 +8,7 @@ import { environmentsDialog } from "./http-env";
 import { HttpRequest } from "./http-model";
 import { httpStore } from "./http-store";
 import { ApiTab } from "./http-tab";
+import { exportRequests, importRequests } from "./http-transfer";
 import { editProfile, manageKeysDialog, themeDialog } from "./editors";
 import { contextMenu, MenuEntries, menuOn } from "./menu";
 import { Arrow, Dir, Layout, Tab } from "./panes";
@@ -69,6 +70,8 @@ const moreBtn = h("button", { class: "icon", title: "Menu and settings", onclick
   contextMenu(r.left, r.bottom + 2, [
     { label: "New API request", hint: "Ctrl+Shift+A", action: () => openRequest() },
     { label: "Environments…", action: () => void environmentsDialog() },
+    { label: "Import requests…", action: () => void importRequests() },
+    { label: "Export requests…", action: () => void exportRequests() },
     null,
     { label: "Save workspace…", action: () => void saveWorkspace() },
     null,
@@ -94,6 +97,15 @@ document.querySelector("#app")!.append(
 );
 
 // ---------------------------------------------------------------- sidebar
+
+// Right-clicking empty space in the list offers what you can add to it (rows have their own menus).
+sidebar.addEventListener("contextmenu", (e) => menuOn(e, [
+  { label: "New profile…", action: () => void newProfile() },
+  { label: "New API request", hint: "Ctrl+Shift+A", action: () => openRequest() },
+  null,
+  { label: "Import requests…", action: () => void importRequests() },
+  { label: "Export requests…", action: () => void exportRequests() },
+]));
 
 function renderProfiles() {
   const q = search.value.toLowerCase();
@@ -398,8 +410,10 @@ function paletteItems(): PaletteItem[] {
   for (const w of ws.named) add("Workspaces", `ws:${w.id}`, `Open workspace ${w.name}`, () => openWorkspace(w), { subtitle: `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}` });
 
   // API requests.
-  add("API", "new-request", "New API request", () => openRequest(), { hint: "Ctrl+Shift+A", keywords: "http rest postman curl endpoint" });
+  add("API", "new-request", "New API request", () => openRequest(), { hint: "Ctrl+Shift+A", keywords: "http rest curl endpoint" });
   add("API", "environments", "API environments…", () => void environmentsDialog(), { keywords: "variables secrets token" });
+  add("API", "import-requests", "Import API requests…", () => void importRequests(), { keywords: "collection openapi swagger curl file" });
+  add("API", "export-requests", "Export API requests…", () => void exportRequests(), { keywords: "backup save file" });
   if (active instanceof ApiTab) {
     const a = active;
     add("API", "send", "Send the request", () => void a.sendNow(), { hint: "Ctrl+Enter" });

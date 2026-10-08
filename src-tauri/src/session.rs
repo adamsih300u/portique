@@ -96,6 +96,8 @@ pub struct Params {
     pub passphrase: Option<String>,
     /// Open an SFTP file browser instead of a shell (SSH profiles only).
     pub sftp: bool,
+    /// Offer a local SOCKS5 proxy through the server instead of a shell (SSH profiles only).
+    pub proxy: bool,
 }
 
 pub fn start(
@@ -121,6 +123,7 @@ pub fn start(
         em.status("connecting", &format!("Connecting to {}…", profile.name));
         let res = match profile.protocol {
             Protocol::Ssh if params.sftp => crate::ssh::run_sftp(&profile, params, em.clone(), rx).await,
+            Protocol::Ssh if params.proxy => crate::ssh::run_proxy(&profile, params, em.clone(), rx).await,
             Protocol::Ssh => crate::ssh::run(&profile, params, em.clone(), rx).await,
             Protocol::Telnet => crate::telnet::run(&profile, params, em.clone(), rx, tx).await,
             Protocol::Serial => crate::serial::run(&profile, params, em.clone(), rx, tx).await,

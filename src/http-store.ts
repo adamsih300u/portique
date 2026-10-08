@@ -1,4 +1,5 @@
 import { api } from "./api";
+import type { Imported } from "./http-import";
 import { ApiData, blankRequest, Environment, HttpRequest, sanitizeData } from "./http-model";
 
 /** Saved requests and environments, shared by every API tab and the sidebar. */
@@ -44,6 +45,35 @@ export const httpStore = {
     const copy = { ...structuredClone(src), id: blankRequest().id, name: `${src.name} copy` };
     await this.saveRequest(copy);
     return copy;
+  },
+
+  /** Adds imported requests, and merges imported environments into existing ones of the same name (never overwriting a value). */
+  async importData(imp: Imported) {
+    this.data.requests.push(...imp.requests);
+    for (const e of imp.envs) {
+      const have = this.data.envs.find((x) => x.name.toLowerCase() === e.name.toLowerCase());
+      if (!have) { this.data.envs.push(e); continue; }
+      for (const v of e.vars) if (!have.vars.some((x) => x.key === v.key)) have.vars.push(v);
+    }
+    await this.persist();
+  },
+
+  /**
+   * Keeps values taken from a response as variables of the active environment. Secrets go to the vault
+   * (and the environment only remembers that the variable exists). Returns false if no environment is active.
+   */
+  async capture(values: { name: string; value: string; secret: boolean }[]): Promise<boolean> {
+    const env = this.env;
+    if (!env) return false;
+    for (const c of values) {
+      let v = env.vars.find((x) => x.key === c.name);
+      if (!v) env.vars.push((v = { key: c.name, value: "", secret: c.secret }));
+      v.secret = c.secret;
+      if (c.secret) { await api.setApiSecret(env.id, c.name, c.value); v.value = ""; }
+      else v.value = c.value;
+    }
+    await this.persist();
+    return true;
   },
 
   /** The environment requests currently run in. */

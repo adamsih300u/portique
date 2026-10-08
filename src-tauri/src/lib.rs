@@ -106,6 +106,32 @@ fn has_api_secret(env_id: String, name: String) -> Res<bool> {
     vault::global().contains(&http::secret_account(&env_id, &name)).map_err(err)
 }
 
+/// Largest file the import reader will take.
+const MAX_IMPORT: u64 = 20 * 1024 * 1024;
+
+/// Reads a text file chosen in the import dialog.
+#[tauri::command]
+async fn read_text_file(path: String) -> Res<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let len = std::fs::metadata(&path).map_err(|e| format!("cannot read {path}: {e}"))?.len();
+        if len > MAX_IMPORT {
+            return Err(format!("{path} is too large to import ({} MB)", len / 1024 / 1024));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        String::from_utf8(bytes).map_err(|_| format!("{path} is not a text file"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Writes a text file chosen in the export dialog.
+#[tauri::command]
+async fn write_text_file(path: String, content: String) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(&path, content).map_err(|e| format!("cannot write {path}: {e}")))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn http_send(req: http::Request) -> Res<http::Response> {
     http::send(req).await.map_err(err)
@@ -392,6 +418,24 @@ fn connect_sftp(
     Ok(session::start(&sessions, profile, params, Emitter::new(on_event)))
 }
 
+/// Logs in to an SSH profile and offers a local SOCKS5 proxy through it (a `proxy` status carries the
+/// port), for sending API requests from the server's point of view. Same event stream and prompts as `connect_session`.
+#[tauri::command]
+fn connect_proxy(
+    sessions: State<'_, Sessions>,
+    profile_id: String,
+    password: Option<String>,
+    passphrase: Option<String>,
+    on_event: Channel<InvokeResponseBody>,
+) -> Res<String> {
+    let profile = store::get_profile(&profile_id).map_err(err)?;
+    if profile.protocol != store::Protocol::Ssh {
+        return Err("Only SSH profiles can carry API requests".into());
+    }
+    let params = Params { password, passphrase, proxy: true, ..Default::default() };
+    Ok(session::start(&sessions, profile, params, Emitter::new(on_event)))
+}
+
 #[tauri::command]
 async fn sftp_list(id: String, path: String) -> Res<sftp::Listing> {
     sftp::list(&id, &path).await.map_err(err)
@@ -452,6 +496,7 @@ async fn local_delete(path: String) -> Res<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Sessions::default())
         .setup(|app| {
@@ -525,6 +570,9 @@ pub fn run() {
             has_api_secret,
             http_send,
             http_cancel,
+            connect_proxy,
+            read_text_file,
+            write_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

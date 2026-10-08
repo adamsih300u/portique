@@ -42,6 +42,7 @@ const sections = (quakeKey: string, quakeOn: boolean): [string, Row[]][] => [
     ["Ctrl+L", "Go to the address"],
     ["Paste a curl command", "Import it into the request"],
     ["Right-click", "Copy as cURL, environments, layout"],
+    ["Right-click sidebar space", "New request, import, export"],
   ]],
   ["Window", [
     ["Ctrl+Shift+P", "Command palette: hosts, tabs, actions"],
