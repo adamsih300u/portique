@@ -1,0 +1,94 @@
+# Reusable build: produces the raw Portique executables (no installer bundles)
+# for Linux and Windows. Called by ci.yml and release.yml.
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      version-suffix:
+        description: "Appended to the artifact names (e.g. dev build id). Empty for releases."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-22.04
+            binary: portique
+            archive: tar.gz
+          - name: windows-x64
+            os: windows-latest
+            binary: portique.exe
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libudev-dev libssl-dev libxdo-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Type-check, test
+        shell: bash
+        run: |
+          npx tsc --noEmit
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build executable
+        run: npx tauri build --no-bundle
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Package
+        id: pkg
+        shell: bash
+        run: |
+          name="portique-${{ steps.ver.outputs.version }}${{ inputs.version-suffix }}-${{ matrix.name }}"
+          mkdir -p out
+          cp "src-tauri/target/release/${{ matrix.binary }}" out/
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd out && 7z a -tzip "../$name.zip" "${{ matrix.binary }}")
+            file="$name.zip"
+          else
+            tar -C out -czf "$name.tar.gz" "${{ matrix.binary }}"
+            file="$name.tar.gz"
+          fi
+          sha256sum "$file" > "$file.sha256"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portique-${{ matrix.name }}
+          path: |
+            ${{ steps.pkg.outputs.file }}
+            ${{ steps.pkg.outputs.file }}.sha256
+          if-no-files-found: error
+          retention-days: 30

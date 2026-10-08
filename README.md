@@ -34,3 +34,14 @@ Linux build deps: `pkg-config build-essential libwebkit2gtk-4.1-dev libgtk-3-dev
     npm run tauri build     # installers
 
 SSH integration tests (need local sshd instances, see `src-tauri/src/ssh.rs`; point `XDG_CONFIG_HOME` at a scratch directory first, they write a vault and profiles): `cargo test -- --ignored`.
+
+## Branches, builds and releases
+
+- `dev` is the integration branch; `main` is stable. Both are built by CI on every push and PR
+  (Linux x64 binary + Windows x64 `.exe`, uploaded as workflow artifacts).
+- Commit messages / squash-merged PR titles follow [Conventional Commits](https://www.conventionalcommits.org/)
+  (`feat:`, `fix:`, `feat!:` …); PR titles are checked by CI.
+- Merging `dev` into `main` triggers release-please, which opens/updates a **release PR** that bumps the
+  version in `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` and updates `CHANGELOG.md`.
+  Merging that PR tags `vX.Y.Z`, creates the GitHub release and attaches the Linux and Windows builds with SHA-256 sums.
+- Never edit the version by hand.
