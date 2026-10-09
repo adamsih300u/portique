@@ -20,6 +20,21 @@ jobs:
   build:
     uses: ./.github/workflows/build.yml
 
+  change-file:
+    # One PR adds one docs/changes/<slug>.md with its decisions (AGENTS.md). Label a PR
+    # `no-change-file` to skip; bot PRs (dependencies, releases) are skipped automatically.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-change-file.mjs "origin/${{ github.base_ref }}"
+        env:
+          SKIP: ${{ (contains(github.event.pull_request.labels.*.name, 'no-change-file') || endsWith(github.actor, '[bot]') || startsWith(github.head_ref, 'release-please--')) && '1' || '' }}
+
   pr-title:
     # Release notes and version bumps are derived from Conventional Commits.
     # PRs are squash-merged, so the PR title becomes the commit message.
