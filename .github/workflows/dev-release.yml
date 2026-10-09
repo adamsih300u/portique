@@ -1,0 +1,72 @@
+# Development builds. Every push to dev is built and published as a GitHub prerelease
+# named after the version the next release will have, plus -dev.N (for example
+# v0.1.1-dev.17). When dev is merged into main, release-please cuts plain v0.1.1.
+#
+# The tag is `dev-build-N`, not `v...`, on purpose: release-please ignores tags it can't
+# read as a version, so dev builds never become the "last release" it measures from.
+name: Dev release
+
+on:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: dev-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the release tags and full history, to predict the next version
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node --test scripts/
+      - id: v
+        run: echo "version=$(node scripts/release-version.mjs)-dev.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ needs.version.outputs.version }}
+      KEEP: 10 # dev prereleases to keep; older ones and their tags are deleted
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish prerelease
+        run: |
+          gh release create "dev-build-${{ github.run_number }}" dist/* \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "v$VERSION" \
+            --prerelease \
+            --notes "Development build of \`dev\` at ${{ github.sha }}. Not a stable release; it may be broken. Changes: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+
+      - name: Prune old dev prereleases
+        run: |
+          gh release list --repo "${{ github.repository }}" --limit 200 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("dev-build-"))] | sort_by(.createdAt) | reverse | .[env.KEEP | tonumber:] | .[].tagName' |
+            while read -r tag; do
+              gh release delete "$tag" --repo "${{ github.repository }}" --cleanup-tag --yes
+            done

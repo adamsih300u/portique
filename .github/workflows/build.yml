@@ -1,12 +1,12 @@
-# Reusable build: produces the raw Portique executables (no installer bundles)
-# for Linux and Windows. Called by ci.yml and release.yml.
+# Reusable build: produces the Portique executables for Linux (plus AppImage and .deb)
+# and Windows. Called by ci.yml, dev-release.yml and release.yml.
 name: Build
 
 on:
   workflow_call:
     inputs:
-      version-suffix:
-        description: "Appended to the artifact names (e.g. dev build id). Empty for releases."
+      version:
+        description: "Version to stamp into the build (e.g. 0.1.1-dev.17). Empty keeps the version in the repository."
         type: string
         default: ""
 
@@ -53,6 +53,10 @@ jobs:
 
       - run: npm ci
 
+      - name: Stamp version
+        if: inputs.version != ''
+        run: node scripts/set-version.mjs "${{ inputs.version }}"
+
       - name: Type-check, test
         shell: bash
         run: |
@@ -78,7 +82,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          base="portique-${{ steps.ver.outputs.version }}${{ inputs.version-suffix }}"
+          base="portique-${{ steps.ver.outputs.version }}"
           rel=src-tauri/target/release
           mkdir -p out release
           cp "$rel/${{ matrix.binary }}" LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-LICENSES.md out/

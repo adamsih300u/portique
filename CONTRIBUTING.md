@@ -90,9 +90,14 @@ One-time: `rustup target add x86_64-pc-windows-gnu`, and install `mingw-w64`, `n
 - **Decisions are written ADR-style** in that file: for each real choice, the context, what was decided, what it costs, and what else was considered. A decision that will keep constraining future work is also added to the standing decisions in `AGENTS.md`.
 - **Commits and PR titles** follow Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, with `!` for breaking changes. Write the commit body to explain *why*.
 
-### Releases
+### Dev builds and releases
 
-Merging `dev` into `main` makes release-please open (or update) a release PR that bumps the version in `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` and writes `CHANGELOG.md`. Merging that PR tags the release and attaches the Linux and Windows builds with SHA-256 sums. Never edit the version by hand.
+Every push to `dev` is built and published as a **prerelease** on the Releases page, named for the version the next release will have: `v0.1.1-dev.17`. The Linux (`.tar.gz`, AppImage, `.deb`) and Windows (`.zip`) files carry that version in their names and inside the app, with SHA-256 sums. The newest ten are kept. Pull requests are built too, but only as workflow artifacts.
+
+Merging `dev` into `main` makes release-please open (or update) a release PR that bumps the version in `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` and writes `CHANGELOG.md`. Merging that PR tags the release (`v0.1.1`) and attaches the builds. The version is the dev build's without `-dev.N`, as long as `main` is built from the same commits.
+
+- **Merge `dev` into `main` with a merge commit, never a squash.** The dev builds work out the next version from the commits since the last release tag, which only works if those commits stay in `main`'s history.
+- Never edit the version by hand.
 
 ## House style
 
