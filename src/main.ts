@@ -151,6 +151,7 @@ function profileMenu(p: Profile): MenuEntries {
       { label: "New request", hint: "Ctrl+Shift+A", action: () => { openApi(p); apiTabFor(p)?.newRequest(); } },
       null,
       { label: "Edit…", action: () => void edit(p) },
+      { label: "Duplicate…", action: () => void duplicate(p) },
       null,
       { label: "Delete…", danger: true, action: () => void remove(p) },
     ];
@@ -164,6 +165,7 @@ function profileMenu(p: Profile): MenuEntries {
     ] : []),
     null,
     { label: "Edit…", action: () => void edit(p) },
+    { label: "Duplicate…", action: () => void duplicate(p) },
     null,
     { label: "Delete…", danger: true, action: () => void remove(p) },
   ];
@@ -180,11 +182,22 @@ async function refresh() {
   renderProfiles();
 }
 
-async function newProfile(protocol?: Profile["protocol"]) {
-  const saved = await editProfile(null, protocol);
-  if (!saved) return;
+/** Refreshes the list after each profile the editor saves; a new API connection is for working with, so it opens. */
+async function created(saved: Profile) {
   await refresh();
-  if (saved.protocol === "api") openApi(saved); // a new API connection is for working with, so open it
+  if (saved.protocol === "api") openApi(saved);
+}
+
+async function newProfile(protocol?: Profile["protocol"]) {
+  await editProfile(null, protocol, { onSaved: created });
+}
+
+/** Opens the editor pre-filled from `p`, named "<name> copy" (numbered if that is taken). */
+async function duplicate(p: Profile) {
+  const taken = new Set(profiles.map((x) => x.name));
+  let name = `${p.name} copy`;
+  for (let n = 2; taken.has(name); n++) name = `${p.name} copy ${n}`;
+  await editProfile(null, undefined, { template: p, name, onSaved: created });
 }
 
 async function edit(p: Profile) {

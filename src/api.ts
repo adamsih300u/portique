@@ -242,6 +242,7 @@ export const api = {
   deleteTheme: (id: string) => invoke<void>("delete_theme", { id }),
   setPassword: (profileId: string, password: string) =>
     guarded(() => invoke<void>("set_password", { profileId, password })),
+  copyPassword: (fromId: string, toId: string) => guarded(() => invoke<void>("copy_password", { fromId, toId })),
   hasPassword: (profileId: string) => guarded(() => invoke<boolean>("has_password", { profileId })),
   listKeys: () => invoke<KeyInfo[]>("list_keys"),
   importKey: (name: string, pem: string, passphrase?: string) =>
