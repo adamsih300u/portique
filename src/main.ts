@@ -15,6 +15,7 @@ import { ensureFont, getTheme, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
 import { type FindTarget, openPalette, type PaletteItem } from "./palette";
+import { isQuick, parseQuickTarget, type QuickTarget, quickLabel, quickProfileFor } from "./quick-connect";
 import { h, promptText } from "./ui";
 import { windowControls } from "./window-controls";
 import { changePasswordDialog, ensureUnlocked } from "./vault-ui";
@@ -411,6 +412,11 @@ function paletteItems(): PaletteItem[] {
     if (p) add("API", `request:${request.id}`, `${p.name}: ${request.name}`, () => { openApi(p); apiTabFor(p)?.select(request.id); }, { subtitle: `${request.method} ${request.url}`, keywords: `${request.group} api http` });
   }
 
+  if (tab && isQuick(tab.focused.profile)) {
+    const p = tab.focused.profile;
+    add("This tab", "save-quick", `Save ${p.name} as a profile…`, () => void saveQuick(p), { keywords: "quick connect keep" });
+  }
+
   // The app.
   add("App", "new-profile", "New profile…", () => void newProfile());
   add("App", "save-workspace", "Save workspace…", () => void saveWorkspace());
@@ -427,6 +433,45 @@ function paletteItems(): PaletteItem[] {
   return out;
 }
 
+/** Opens the profile editor on a quick-connect host so it can be kept; the open tab carries on as it is. */
+async function saveQuick(p: Profile) {
+  const saved = await editProfile({ ...p, id: "" });
+  if (saved) await refresh();
+}
+
+const QUICK_USER = "portique.quick.user";
+
+/** Opens a host that isn't saved, in a new tab named after it. Asks for a user name when the text had none. */
+async function quickConnect(t: QuickTarget) {
+  let user = t.user;
+  if (!user) {
+    let last = "";
+    try { last = localStorage.getItem(QUICK_USER) ?? ""; } catch {}
+    const asked = await promptText("Quick connect", `User name for ${quickLabel(t)}`, last);
+    if (!asked) return;
+    user = asked;
+  }
+  try { localStorage.setItem(QUICK_USER, user); } catch {}
+  try {
+    openTab(await api.quickProfile(quickProfileFor(t, user)));
+  } catch (e) {
+    alert(`Can't connect:\n${String(e)}`);
+  }
+}
+
+/** Entries made from the typed text. */
+function dynamicItems(query: string): PaletteItem[] {
+  const out: PaletteItem[] = [];
+  const t = parseQuickTarget(query);
+  if (t) out.push({
+    id: `quick:${query}`, group: "Quick connect", pin: t.clear ? "top" : "bottom",
+    title: `Connect to ${quickLabel(t)}`,
+    subtitle: `${t.protocol === "ssh" ? "SSH" : "Telnet"}${t.user ? ` as ${t.user}` : ""}, not saved`,
+    run: () => void quickConnect(t),
+  });
+  return out;
+}
+
 /** Search target for find mode: the focused terminal of the active tab. */
 function findTarget(): FindTarget | null {
   if (!(active instanceof Tab)) return null;
@@ -438,7 +483,7 @@ function findTarget(): FindTarget | null {
   };
 }
 
-const showPalette = (mode: "commands" | "find") => openPalette({ items: paletteItems, findTarget }, mode);
+const showPalette = (mode: "commands" | "find") => openPalette({ items: paletteItems, dynamic: dynamicItems, findTarget }, mode);
 
 // ---------------------------------------------------------------- shortcuts
 
