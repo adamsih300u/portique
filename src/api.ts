@@ -235,6 +235,12 @@ export interface HttpResult {
 /** Profiles saved before API connections or saved commands existed have no settings for them: give every profile well-formed ones. */
 const withDefaults = (p: Profile): Profile => ({ ...p, api: sanitizeApiSettings(p.api), commands: sanitizeCommands(p.commands) });
 
+/** The address a Toolbox network check used, and how each port went. */
+export interface ToolPorts {
+  address: string;
+  results: { port: number; open: boolean; ms: number | null; note: string }[];
+}
+
 export const api = {
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
   vaultCreate: (password: string) => invoke<void>("vault_create", { password }),
@@ -293,6 +299,10 @@ export const api = {
   sftpTransfer: (id: string, upload: boolean, items: TransferItem[], overwrite: boolean) =>
     invoke<{ tid: string; name: string }[]>("sftp_transfer", { id, upload, items, overwrite }),
   sftpCancel: (id: string, tid: string) => invoke<void>("sftp_cancel", { id, tid }),
+  toolDns: (name: string) => invoke<string[]>("tool_dns", { name }),
+  toolPorts: (host: string, ports: number[]) => invoke<ToolPorts>("tool_ports", { host, ports }),
+  toolTcpPing: (host: string, port: number, count: number) => invoke<ToolPorts>("tool_tcp_ping", { host, port, count }),
+  toolWake: (mac: string, broadcast: string) => invoke<string>("tool_wake", { mac, broadcast }),
   localHome: () => invoke<string>("local_home"),
   localList: (path: string) => invoke<Listing>("local_list", { path }),
   localMkdir: (path: string) => invoke<void>("local_mkdir", { path }),

@@ -217,6 +217,10 @@ kbd { font: var(--fs-xs)/1 system-ui, "Segoe UI", sans-serif; padding: 2px 5px; 
 .pal-sub { color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-fill { flex: 1; }
 .pal-tag { color: var(--muted); font: 600 var(--fs-label)/1 var(--display); font-variant-caps: all-small-caps; letter-spacing: .1em; }
+.tool-out { margin: 10px 0 0; padding: 10px 12px; min-height: 3.2em; max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; font: var(--fs-sm)/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.tool-out:empty { border-style: dashed; }
+.tool-out.wait { color: var(--muted); } .tool-out.error { color: var(--danger); }
+.tool-status { min-height: 1.4em; margin-top: 6px; color: var(--muted); font-size: var(--fs-xs); }
 .pal-empty { padding: 14px; color: var(--muted); text-align: center; }
 .pal-foot { display: flex; justify-content: space-between; gap: 12px; padding: 6px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-xs); }
 .pal.finding { width: min(calc(560px * var(--s)), 92vw); }

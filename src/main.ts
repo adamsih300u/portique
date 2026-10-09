@@ -16,6 +16,7 @@ import { ensureFont, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
 import { type FindTarget, openPalette, type PaletteItem } from "./palette";
+import { openTool, TOOLS } from "./toolbox";
 import { fillPlaceholders, placeholders, type SavedCommand } from "./saved-commands";
 import { isQuick, parseQuickTarget, type QuickTarget, quickLabel, quickProfileFor } from "./quick-connect";
 import { h, promptText } from "./ui";
@@ -600,6 +601,10 @@ function paletteItems(): PaletteItem[] {
     add("This tab", "save-quick", `Save ${p.name} as a profile…`, () => void saveQuick(p), { keywords: "quick connect keep" });
   }
 
+  // The toolbox: one row in the default list, every tool when typing ("port", "hash", "subnet"…).
+  add("Toolbox", "toolbox", "Toolbox…", () => showPalette("commands", "Toolbox "), { only: "browse", subtitle: "port check, DNS, passwords, converters and more", keywords: "tools utilities" });
+  for (const t of TOOLS) add("Toolbox", `tool:${t.id}`, t.title, () => void openTool(t), { only: "search", subtitle: t.hint, keywords: t.keywords });
+
   // The app.
   add("App", "new-profile", "New profile…", () => void newProfile());
   add("App", "save-workspace", "Save workspace…", () => void saveWorkspace());
@@ -678,7 +683,7 @@ function findTarget(): FindTarget | null {
   };
 }
 
-const showPalette = (mode: "commands" | "find") => openPalette({ items: paletteItems, dynamic: dynamicItems, findTarget }, mode);
+const showPalette = (mode: "commands" | "find", initial = "") => openPalette({ items: paletteItems, dynamic: dynamicItems, findTarget }, mode, initial);
 
 // ---------------------------------------------------------------- shortcuts
 
