@@ -10,7 +10,77 @@ export interface Pair {
 }
 
 export type BodyKind = "none" | "json" | "text" | "form";
-export type AuthKind = "none" | "bearer" | "basic" | "header" | "oauth2";
+/** `inherit` (requests only) means: use the connection's sign-in. */
+export type AuthKind = "inherit" | "none" | "bearer" | "basic" | "header" | "oauth2";
+
+export interface AuthSettings {
+  kind: AuthKind;
+  token: string;
+  user: string;
+  pass: string;
+  name: string;
+  value: string;
+  /** OAuth 2.0 client credentials. */
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+}
+
+export function blankAuth(kind: AuthKind = "none"): AuthSettings {
+  return { kind, token: "", user: "", pass: "", name: "", value: "", tokenUrl: "", clientId: "", clientSecret: "", scope: "" };
+}
+
+function sanitizeAuth(raw: unknown, fallback: AuthKind): AuthSettings {
+  const a = (raw && typeof raw === "object" ? raw : {}) as Partial<AuthSettings>;
+  const b = blankAuth(fallback);
+  const text = (k: keyof AuthSettings) => String(a[k] ?? b[k]);
+  return {
+    kind: (["inherit", "none", "bearer", "basic", "header", "oauth2"].includes(String(a.kind)) ? a.kind : fallback) as AuthKind,
+    token: text("token"), user: text("user"), pass: text("pass"), name: text("name"), value: text("value"),
+    tokenUrl: text("tokenUrl"), clientId: text("clientId"), clientSecret: text("clientSecret"), scope: text("scope"),
+  };
+}
+
+/**
+ * What an API connection (a profile of type "api") holds: where it points, how it signs in by default,
+ * which headers every request carries, and how requests are sent.
+ */
+export interface ApiSettings {
+  /** The endpoint, e.g. `https://api.example.com/v1`. Requests are written relative to it. May contain `{{variables}}`. */
+  baseUrl: string;
+  /** Id of an SSH profile to send through ("" for this computer). */
+  via: string;
+  auth: AuthSettings;
+  headers: Pair[];
+  insecure: boolean;
+  follow: boolean;
+  timeout: number;
+}
+
+export function defaultApiSettings(): ApiSettings {
+  return { baseUrl: "", via: "", auth: blankAuth("none"), headers: [], insecure: false, follow: true, timeout: 30 };
+}
+
+export function sanitizeApiSettings(raw: unknown): ApiSettings {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Partial<ApiSettings>;
+  const d = defaultApiSettings();
+  const auth = sanitizeAuth(o.auth, "none");
+  if (auth.kind === "inherit") auth.kind = "none";
+  return {
+    baseUrl: String(o.baseUrl ?? "").trim(),
+    via: String(o.via ?? ""),
+    auth,
+    headers: sanitizePairs(o.headers),
+    insecure: o.insecure === true,
+    follow: o.follow !== false,
+    timeout: Number(o.timeout) > 0 ? Number(o.timeout) : d.timeout,
+  };
+}
+
+function sanitizePairs(v: unknown): Pair[] {
+  return Array.isArray(v) ? v.filter((p) => p && typeof p === "object").map((p) => ({ key: String(p.key ?? ""), value: String(p.value ?? ""), on: p.on !== false })) : [];
+}
 
 /** One thing to verify about the response. */
 export interface Check {
@@ -45,26 +115,9 @@ export interface HttpRequest {
   bodyKind: BodyKind;
   bodyText: string;
   form: Pair[];
-  auth: {
-    kind: AuthKind;
-    token: string;
-    user: string;
-    pass: string;
-    name: string;
-    value: string;
-    /** OAuth 2.0 client credentials. */
-    tokenUrl: string;
-    clientId: string;
-    clientSecret: string;
-    scope: string;
-  };
-  /** Id of an SSH profile to send through ("" for this computer). */
-  via: string;
+  auth: AuthSettings;
   checks: Check[];
   captures: Capture[];
-  insecure: boolean;
-  follow: boolean;
-  timeout: number;
 }
 
 export interface EnvVar {
@@ -80,11 +133,18 @@ export interface Environment {
   vars: EnvVar[];
 }
 
-export interface ApiData {
+/** Everything one API connection owns besides its settings (those are in the profile). */
+export interface ConnData {
   requests: HttpRequest[];
   envs: Environment[];
   /** The environment requests run in ("" for none). */
   activeEnv: string;
+}
+
+/** The saved file: one entry per API connection, keyed by the connection's profile id. */
+export interface ApiFile {
+  version: 2;
+  connections: Record<string, ConnData>;
 }
 
 export function blankRequest(): HttpRequest {
@@ -99,13 +159,9 @@ export function blankRequest(): HttpRequest {
     bodyKind: "none",
     bodyText: "",
     form: [],
-    auth: { kind: "none", token: "", user: "", pass: "", name: "", value: "", tokenUrl: "", clientId: "", clientSecret: "", scope: "" },
-    via: "",
+    auth: blankAuth("inherit"),
     checks: [],
     captures: [],
-    insecure: false,
-    follow: true,
-    timeout: 30,
   };
 }
 
@@ -113,24 +169,19 @@ export function blankRequest(): HttpRequest {
 export function sanitizeRequest(raw: Partial<HttpRequest> | null | undefined): HttpRequest {
   const b = blankRequest();
   const r = { ...b, ...(raw ?? {}) } as HttpRequest;
-  const pairs = (v: unknown): Pair[] =>
-    Array.isArray(v) ? v.filter((p) => p && typeof p === "object").map((p) => ({ key: String(p.key ?? ""), value: String(p.value ?? ""), on: p.on !== false })) : [];
   return {
-    ...r,
     id: String(r.id || b.id),
     name: String(r.name ?? ""),
     group: String(r.group ?? ""),
     method: (METHODS as readonly string[]).includes(r.method) ? r.method : "GET",
     url: String(r.url ?? ""),
-    params: pairs(r.params),
-    headers: pairs(r.headers),
-    form: pairs(r.form),
+    params: sanitizePairs(r.params),
+    headers: sanitizePairs(r.headers),
+    form: sanitizePairs(r.form),
     bodyText: String(r.bodyText ?? ""),
     bodyKind: ["none", "json", "text", "form"].includes(r.bodyKind) ? r.bodyKind : "none",
-    auth: { ...b.auth, ...(r.auth ?? {}), kind: (["none", "bearer", "basic", "header", "oauth2"].includes(r.auth?.kind) ? r.auth.kind : "none") as AuthKind },
-    timeout: Number(r.timeout) > 0 ? Number(r.timeout) : 30,
-    insecure: r.insecure === true,
-    via: String(r.via ?? ""),
+    // Requests written before connections existed had "none" as their default: that means "use the connection's" now.
+    auth: sanitizeAuth(r.auth, "inherit"),
     checks: (Array.isArray(r.checks) ? r.checks : []).filter((c) => c && typeof c === "object").map((c) => ({
       on: c.on !== false,
       source: (["status", "header", "json", "body"].includes(c.source) ? c.source : "status") as Check["source"],
@@ -145,12 +196,11 @@ export function sanitizeRequest(raw: Partial<HttpRequest> | null | undefined): H
       name: String(c.name ?? ""),
       secret: c.secret === true,
     })),
-    follow: r.follow !== false,
   };
 }
 
-export function sanitizeData(raw: unknown): ApiData {
-  const o = (raw && typeof raw === "object" ? raw : {}) as Partial<ApiData>;
+export function sanitizeConn(raw: unknown): ConnData {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Partial<ConnData>;
   return {
     requests: (Array.isArray(o.requests) ? o.requests : []).map(sanitizeRequest),
     envs: (Array.isArray(o.envs) ? o.envs : [])
@@ -162,6 +212,50 @@ export function sanitizeData(raw: unknown): ApiData {
       })),
     activeEnv: typeof o.activeEnv === "string" ? o.activeEnv : "",
   };
+}
+
+/**
+ * Reads the saved file. `legacy` is set for files from before connections existed (one global list of
+ * requests and environments): the caller moves it into a connection of its own.
+ */
+export function sanitizeFile(raw: unknown): { file: ApiFile; legacy: ConnData | null } {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const connections: Record<string, ConnData> = {};
+  if (o.connections && typeof o.connections === "object") {
+    for (const [id, c] of Object.entries(o.connections)) connections[id] = sanitizeConn(c);
+  }
+  const old = Array.isArray(o.requests) || Array.isArray(o.envs) ? sanitizeConn(o) : null;
+  return { file: { version: 2, connections }, legacy: old && (old.requests.length || old.envs.length) ? old : null };
+}
+
+// ---------------------------------------------------------------- addresses and headers
+
+/** True for `https://…`, and for an address that starts with a variable (which may hold a whole address). */
+export const isAbsoluteUrl = (url: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(url.trim()) || url.trim().startsWith("{{");
+
+/** The address a request really goes to: its own if it is complete, otherwise the connection's base followed by it. */
+export function resolveUrl(base: string, url: string): string {
+  const u = url.trim();
+  const b = base.trim();
+  if (!b || isAbsoluteUrl(u)) return u;
+  if (!u) return b;
+  if (u.startsWith("?") || u.startsWith("#")) return b + u;
+  return b.replace(/\/+$/, "") + "/" + u.replace(/^\/+/, "");
+}
+
+/** The part of `url` after the connection's base address, if it starts with it (so a pasted full address becomes a short one). */
+export function stripBase(base: string, url: string): string {
+  const b = base.trim().replace(/\/+$/, "");
+  const u = url.trim();
+  if (!b || !u.toLowerCase().startsWith(b.toLowerCase())) return url;
+  const rest = u.slice(b.length);
+  return rest === "" || /^[/?#]/.test(rest) ? rest || "/" : url;
+}
+
+/** The connection's headers followed by the request's, the request's winning when both set one. */
+export function mergeHeaders(conn: Pair[], req: Pair[]): Pair[] {
+  const mine = new Set(req.filter((h) => h.on && h.key.trim()).map((h) => h.key.trim().toLowerCase()));
+  return [...conn.filter((h) => h.on && h.key.trim() && !mine.has(h.key.trim().toLowerCase())), ...req.filter((h) => h.on && h.key.trim())];
 }
 
 // ---------------------------------------------------------------- query string <-> params table
@@ -201,21 +295,22 @@ export function paramsFromUrl(url: string, previous: Pair[]): Pair[] {
 
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The request as a curl command. Variables stay as `{{name}}`, so secrets are never copied out. */
-export function toCurl(r: HttpRequest): string {
+/** The request as a curl command, with the connection's address, headers and sign-in folded in. Variables stay as `{{name}}`, so secrets are never copied out. */
+export function toCurl(r: HttpRequest, conn: ApiSettings = defaultApiSettings()): string {
   const parts = ["curl"];
   if (r.method !== "GET") parts.push("-X", r.method);
-  parts.push(shq(r.url.trim()));
-  for (const h of r.headers) if (h.on && h.key.trim()) parts.push("-H", shq(`${h.key.trim()}: ${h.value}`));
-  if (r.bodyKind === "json" && !r.headers.some((h) => h.on && h.key.toLowerCase() === "content-type")) parts.push("-H", shq("Content-Type: application/json"));
-  const a = r.auth;
+  parts.push(shq(resolveUrl(conn.baseUrl, r.url)));
+  const headers = mergeHeaders(conn.headers, r.headers);
+  for (const h of headers) parts.push("-H", shq(`${h.key.trim()}: ${h.value}`));
+  if (r.bodyKind === "json" && !headers.some((h) => h.key.toLowerCase() === "content-type")) parts.push("-H", shq("Content-Type: application/json"));
+  const a = r.auth.kind === "inherit" ? conn.auth : r.auth;
   if (a.kind === "bearer" && a.token) parts.push("-H", shq(`Authorization: Bearer ${a.token}`));
   if (a.kind === "basic") parts.push("-u", shq(`${a.user}:${a.pass}`));
   if (a.kind === "header" && a.name) parts.push("-H", shq(`${a.name}: ${a.value}`));
   if (r.bodyKind === "json" || r.bodyKind === "text") parts.push("--data-raw", shq(r.bodyText));
   if (r.bodyKind === "form") for (const f of r.form) if (f.on && f.key) parts.push("--data-urlencode", shq(`${f.key}=${f.value}`));
-  if (r.insecure) parts.push("-k");
-  if (r.follow) parts.push("-L");
+  if (conn.insecure) parts.push("-k");
+  if (conn.follow) parts.push("-L");
   return parts.join(" ");
 }
 
@@ -296,10 +391,9 @@ export function fromCurl(text: string): HttpRequest {
       case "-A": case "--user-agent": r.headers.push({ key: "User-Agent", value: val ?? "", on: true }); break;
       case "-e": case "--referer": r.headers.push({ key: "Referer", value: val ?? "", on: true }); break;
       case "-b": case "--cookie": r.headers.push({ key: "Cookie", value: val ?? "", on: true }); break;
-      case "-m": case "--max-time": if (Number(val) > 0) r.timeout = Math.ceil(Number(val)); break;
+      case "-m": case "--max-time": break; // timeouts belong to the connection
       case "--url": url = val ?? ""; break;
-      case "-k": case "--insecure": r.insecure = true; break;
-      case "-L": case "--location": r.follow = true; break;
+      case "-k": case "--insecure": case "-L": case "--location": break; // these belong to the connection's settings
       case "-G": case "--get": getMode = true; break;
       case "-I": case "--head": method = method || "HEAD"; break;
       default:
@@ -310,7 +404,7 @@ export function fromCurl(text: string): HttpRequest {
   r.url = url;
   // A bearer token written as a header is clearer in the Auth tab.
   const authIdx = r.headers.findIndex((h) => h.key.toLowerCase() === "authorization" && /^bearer\s+/i.test(h.value));
-  if (authIdx >= 0 && r.auth.kind === "none") {
+  if (authIdx >= 0 && r.auth.kind === "inherit") {
     r.auth = { ...r.auth, kind: "bearer", token: r.headers[authIdx].value.replace(/^bearer\s+/i, "") };
     r.headers.splice(authIdx, 1);
   }

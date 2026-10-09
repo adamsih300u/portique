@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { ApiSettings, defaultApiSettings, sanitizeApiSettings } from "./http-model";
 
-export type Protocol = "ssh" | "telnet" | "serial";
+export type Protocol = "ssh" | "telnet" | "serial" | "api";
 export type AuthMethod = "password" | "key" | "keyAndPassword";
 
 export interface SerialSettings {
@@ -51,6 +52,8 @@ export interface Profile {
   localDir: string;
   /** SSH only: where it starts on the server ("": the login folder). */
   remoteDir: string;
+  /** API only: base address, default sign-in and headers, and options. */
+  api: ApiSettings;
 }
 
 export interface Theme {
@@ -105,6 +108,7 @@ export function newProfile(): Profile {
     forwards: [],
     localDir: "",
     remoteDir: "",
+    api: defaultApiSettings(),
   };
 }
 
@@ -208,6 +212,9 @@ export interface HttpResult {
   url: string;
 }
 
+/** Profiles saved before API connections existed have no settings for one: give every profile well-formed ones. */
+const withApi = (p: Profile): Profile => ({ ...p, api: sanitizeApiSettings(p.api) });
+
 export const api = {
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
   vaultCreate: (password: string) => invoke<void>("vault_create", { password }),
@@ -215,8 +222,8 @@ export const api = {
   vaultLock: () => invoke<void>("vault_lock"),
   vaultTouch: () => invoke<void>("vault_touch"),
   vaultChangePassword: (old: string, nw: string) => invoke<void>("vault_change_password", { old, new: nw }),
-  listProfiles: () => invoke<Profile[]>("list_profiles"),
-  saveProfile: (profile: Profile) => invoke<Profile>("save_profile", { profile }),
+  listProfiles: async () => (await invoke<Profile[]>("list_profiles")).map(withApi),
+  saveProfile: async (profile: Profile) => withApi(await invoke<Profile>("save_profile", { profile })),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
   getSettings: () => invoke<Settings>("get_settings"),
   setGpu: (enabled: boolean) => invoke<void>("set_gpu", { enabled }),

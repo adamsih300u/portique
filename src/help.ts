@@ -34,15 +34,16 @@ const sections = (quakeKey: string, quakeOn: boolean): [string, Row[]][] => [
     ["Backspace", "Parent folder"],
     ["F5", "Refresh"],
   ]],
-  ["API requests", [
+  ["API connections", [
+    ["+ New → API", "Make a connection"],
+    ["Double-click", "Open it"],
     ["Ctrl+Shift+A", "New request"],
     ["Ctrl+Enter", "Send"],
     ["Esc", "Cancel while waiting"],
-    ["Ctrl+S", "Save"],
+    ["Ctrl+S", "Save the request"],
     ["Ctrl+L", "Go to the address"],
     ["Paste a curl command", "Import it into the request"],
-    ["Right-click", "Copy as cURL, environments, layout"],
-    ["Right-click sidebar space", "New request, import, export"],
+    ["Right-click", "Copy as cURL, environments, settings"],
   ]],
   ["Window", [
     ["Ctrl+Shift+P", "Command palette: hosts, tabs, actions"],

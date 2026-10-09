@@ -1,6 +1,6 @@
 import { api } from "./api";
 import { Environment, EnvVar } from "./http-model";
-import { httpStore } from "./http-store";
+import type { ConnStore } from "./http-store";
 import { h, modal } from "./ui";
 
 interface Row extends EnvVar {
@@ -17,8 +17,8 @@ interface Draft {
 }
 
 /** The environments editor: named sets of variables (`{{name}}`) that requests are filled in with. */
-export async function environmentsDialog(selectId = ""): Promise<boolean> {
-  const drafts: Draft[] = await Promise.all(httpStore.data.envs.map(async (e) => ({
+export async function environmentsDialog(store: ConnStore, selectId = ""): Promise<boolean> {
+  const drafts: Draft[] = await Promise.all(store.data.envs.map(async (e) => ({
     id: e.id,
     name: e.name,
     rows: await Promise.all(e.vars.map(async (v) => ({
@@ -27,7 +27,7 @@ export async function environmentsDialog(selectId = ""): Promise<boolean> {
       stored: v.secret ? await api.hasApiSecret(e.id, v.key).catch(() => true) : false,
     }))),
   })));
-  let current = drafts.find((d) => d.id === selectId) ?? drafts.find((d) => d.id === httpStore.data.activeEnv) ?? drafts[0];
+  let current = drafts.find((d) => d.id === selectId) ?? drafts.find((d) => d.id === store.data.activeEnv) ?? drafts[0];
 
   const list = h("div", { class: "env-list" });
   const editor = h("div", { class: "env-editor" });
@@ -114,7 +114,7 @@ export async function environmentsDialog(selectId = ""): Promise<boolean> {
         }
       }
       // Secrets go to the vault; anything that stopped being one, or was removed, is deleted from it.
-      const before = httpStore.data.envs;
+      const before = store.data.envs;
       for (const d of drafts) {
         for (const r of d.rows.filter((r) => r.key && r.secret && r.value)) await api.setApiSecret(d.id, r.key, r.value);
       }
@@ -124,13 +124,13 @@ export async function environmentsDialog(selectId = ""): Promise<boolean> {
           if (!now?.rows.some((r) => r.key === v.key && r.secret)) await api.setApiSecret(e.id, v.key, "").catch(() => {});
         }
       }
-      httpStore.data.envs = drafts.map((d): Environment => ({
+      store.data.envs = drafts.map((d): Environment => ({
         id: d.id,
         name: d.name.trim(),
         vars: d.rows.filter((r) => r.key).map((r) => ({ key: r.key, value: r.secret ? "" : r.value, secret: r.secret })),
       }));
-      if (!httpStore.data.envs.some((e) => e.id === httpStore.data.activeEnv)) httpStore.data.activeEnv = "";
-      await httpStore.persist();
+      if (!store.data.envs.some((e) => e.id === store.data.activeEnv)) store.data.activeEnv = "";
+      await store.persist();
       saved = true;
     } },
   ], true);

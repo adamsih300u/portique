@@ -1,6 +1,6 @@
 import { api } from "./api";
 import { exportData, parseImport } from "./http-import";
-import { httpStore } from "./http-store";
+import type { ConnStore } from "./http-store";
 import { h, modal } from "./ui";
 
 const FILES = [{ name: "API requests", extensions: ["json", "txt", "sh"] }];
@@ -12,13 +12,13 @@ async function say(title: string, ...lines: (Node | string)[]) {
   await modal(title, h("div", {}, ...lines.map((l) => (typeof l === "string" ? h("p", {}, l) : l))), [{ label: "OK", primary: true }]);
 }
 
-/** Asks for a file and adds its requests (and environments) to the sidebar. */
-export async function importRequests(): Promise<void> {
+/** Asks for a file and adds its requests (and environments) to the connection. */
+export async function importRequests(store: ConnStore): Promise<void> {
   const path = await api.chooseFileToOpen(FILES);
   if (!path) return;
   try {
     const imp = parseImport(await api.readTextFile(path), baseName(path));
-    await httpStore.importData(imp);
+    await store.importData(imp);
     const where = imp.folder ? ` in “${imp.folder}”` : "";
     await say("Imported",
       `Added ${plural(imp.requests.length, "request")}${where}.`,
@@ -29,9 +29,9 @@ export async function importRequests(): Promise<void> {
   }
 }
 
-/** Saves every request and environment to a file; secret values are never included. */
-export async function exportRequests(): Promise<void> {
-  const d = httpStore.data;
+/** Saves the connection's requests and environments to a file; secret values are never included. */
+export async function exportRequests(store: ConnStore): Promise<void> {
+  const d = store.data;
   if (!d.requests.length && !d.envs.length) {
     await say("Nothing to export", "Save a request first (Ctrl+S in a request), then export.");
     return;
