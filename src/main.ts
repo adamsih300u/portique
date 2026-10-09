@@ -104,19 +104,70 @@ function renderProfiles() {
     groups.set(g, [...(groups.get(g) ?? []), p]);
   }
   const named = ws.named.filter((w) => w.name.toLowerCase().includes(q));
+  const searching = q !== "";
+  const section = (key: string, label: string, rows: HTMLElement[], drop?: string) => {
+    const shut = !searching && collapsed.has(key);
+    const head = h("div", { class: "group", title: shut ? "Expand" : "Collapse", onclick: () => toggleGroup(key) },
+      h("span", { class: "caret" }, shut ? "▸" : "▾"), label);
+    const sec = h("section", { class: shut ? "collapsed" : "" }, head, ...(shut ? [] : rows));
+    if (drop !== undefined) acceptProfiles(sec, drop);
+    return sec;
+  };
   sidebar.replaceChildren(
     ...[...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([g, list]) =>
-      h("section", {}, h("div", { class: "group" }, g),
-        ...list.sort((a, b) => a.name.localeCompare(b.name)).map(profileRow))),
-    ...(named.length
-      ? [h("section", {}, h("div", { class: "group" }, "Workspaces"), ...named.map(workspaceRow))]
-      : []),
+      section(`p:${g}`, g, list.sort((a, b) => a.name.localeCompare(b.name)).map(profileRow), g === "Ungrouped" ? "" : g)),
+    ...(named.length ? [section("w", "Workspaces", named.map(workspaceRow))] : []),
   );
+}
+
+const COLLAPSED_KEY = "portique.collapsedGroups";
+const collapsed = new Set<string>((() => {
+  try { return JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as string[]; } catch { return []; }
+})());
+
+function toggleGroup(key: string) {
+  if (!collapsed.delete(key)) collapsed.add(key);
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])); } catch { /* storage unavailable: just don't remember */ }
+  renderProfiles();
+}
+
+const DRAG_TYPE = "application/x-portique-profile";
+
+/** Lets a group section take dropped profile rows; the profile joins that group (`""` = no group). */
+function acceptProfiles(sec: HTMLElement, group: string) {
+  const has = (e: DragEvent) => e.dataTransfer?.types.includes(DRAG_TYPE) ?? false;
+  sec.addEventListener("dragover", (e) => {
+    if (!has(e)) return;
+    e.preventDefault();
+    sec.classList.add("drop");
+  });
+  sec.addEventListener("dragleave", (e) => {
+    if (!sec.contains(e.relatedTarget as Node | null)) sec.classList.remove("drop");
+  });
+  sec.addEventListener("drop", (e) => {
+    sec.classList.remove("drop");
+    if (!has(e)) return;
+    e.preventDefault();
+    const p = profiles.find((x) => x.id === e.dataTransfer!.getData(DRAG_TYPE));
+    if (p && (p.group || "") !== group) void moveToGroup(p, group);
+  });
+}
+
+async function moveToGroup(p: Profile, group: string) {
+  const saved = await api.saveProfile({ ...p, group }).catch(() => null);
+  if (!saved) return;
+  profiles = profiles.map((x) => (x.id === saved.id ? saved : x));
+  collapsed.delete(`p:${group || "Ungrouped"}`);
+  renderProfiles();
 }
 
 function profileRow(p: Profile) {
   const th = getTheme(p.appearance.themeId);
-  const row = h("div", { class: "profile", title: describe(p), ondblclick: () => openTab(p),
+  const row = h("div", { class: "profile", title: describe(p), draggable: true, ondblclick: () => openTab(p),
+    ondragstart: (e: DragEvent) => {
+      e.dataTransfer!.setData(DRAG_TYPE, p.id);
+      e.dataTransfer!.effectAllowed = "move";
+    },
     oncontextmenu: (e: MouseEvent) => {
       row.classList.add("ctx");
       menuOn(e, profileMenu(p), () => row.classList.remove("ctx"));
