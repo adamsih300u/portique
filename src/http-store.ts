@@ -1,5 +1,5 @@
 import { api } from "./api";
-import { ApiData, blankRequest, Environment, HttpRequest, sanitizeData } from "./http-model";
+import { type ApiData, blankRequest, type Environment, type HttpRequest, sanitizeData } from "./http-model";
 
 /** Saved requests and environments, shared by every API tab and the sidebar. */
 export const httpStore = {

@@ -73,7 +73,7 @@ export function blankRequest(): HttpRequest {
 /** Fills in anything missing, so older or hand-edited files never break the UI. */
 export function sanitizeRequest(raw: Partial<HttpRequest> | null | undefined): HttpRequest {
   const b = blankRequest();
-  const r = { ...b, ...(raw ?? {}) } as HttpRequest;
+  const r = { ...b, ...(raw ?? {}) };
   const pairs = (v: unknown): Pair[] =>
     Array.isArray(v) ? v.filter((p) => p && typeof p === "object").map((p) => ({ key: String(p.key ?? ""), value: String(p.value ?? ""), on: p.on !== false })) : [];
   return {
@@ -328,7 +328,10 @@ export function fmtBytes(n: number): string {
   const u = ["KB", "MB", "GB"];
   let v = n / 1024;
   let i = 0;
-  while (v >= 1024 && i < u.length - 1) (v /= 1024), i++;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
 }
 

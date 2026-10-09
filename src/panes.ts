@@ -1,5 +1,5 @@
-import { Profile } from "./api";
-import { TabState, TerminalTab } from "./terminal-tab";
+import { type Profile } from "./api";
+import { type TabState, TerminalTab } from "./terminal-tab";
 import { ensureFont, getTheme } from "./themes";
 import { h } from "./ui";
 

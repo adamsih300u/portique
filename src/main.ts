@@ -1,22 +1,22 @@
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import emblem from "./assets/portique.svg";
-import { api, Profile, Settings, setUnlockHook } from "./api";
+import { api, type Profile, type Settings, setUnlockHook } from "./api";
 import { applyChrome, chromeDialog, DEFAULT_UI, PRESET_NAMES, presetUi } from "./chrome";
 import { FileTab } from "./file-tab";
 import { environmentsDialog } from "./http-env";
-import { HttpRequest } from "./http-model";
+import { type HttpRequest } from "./http-model";
 import { httpStore } from "./http-store";
 import { ApiTab } from "./http-tab";
 import { editProfile, manageKeysDialog, themeDialog } from "./editors";
-import { contextMenu, MenuEntries, menuOn } from "./menu";
-import { Arrow, Dir, Layout, Tab } from "./panes";
+import { contextMenu, type MenuEntries, menuOn } from "./menu";
+import { type Arrow, type Dir, type Layout, Tab } from "./panes";
 import { shellIntegrationDialog } from "./shell-integration";
 import { TerminalTab } from "./terminal-tab";
 import { ensureFont, getTheme, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
-import { FindTarget, openPalette, PaletteItem } from "./palette";
+import { type FindTarget, openPalette, type PaletteItem } from "./palette";
 import { h, promptText } from "./ui";
 import { windowControls } from "./window-controls";
 import { changePasswordDialog, ensureUnlocked } from "./vault-ui";
@@ -347,7 +347,7 @@ async function toggleQuake() {
     await api.setQuake(!settings.quake);
     settings.quake = !settings.quake;
   } catch (e) {
-    alert(`Drop-down mode could not be changed:\n${e}`);
+    alert(`Drop-down mode could not be changed:\n${String(e)}`);
   }
 }
 

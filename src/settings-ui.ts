@@ -1,4 +1,4 @@
-import { api, Settings } from "./api";
+import { api, type Settings } from "./api";
 import { field, h, modal } from "./ui";
 
 /** Turns a key press into an accelerator such as "Ctrl+Alt+Space"; null while only modifiers are down. */

@@ -1,11 +1,11 @@
-import { api, HttpPayload, HttpResult, Profile } from "./api";
+import { api, type HttpPayload, type HttpResult, type Profile } from "./api";
 import { environmentsDialog } from "./http-env";
 import {
-  AuthKind, BodyKind, blankRequest, fmtBytes, fmtMillis, fromCurl, HttpRequest, JSON_TOKEN, looksLikeCurl, METHODS,
-  Method, Pair, paramsFromUrl, prettyJson, sanitizeRequest, toCurl, withQuery,
+  type AuthKind, type BodyKind, blankRequest, fmtBytes, fmtMillis, fromCurl, type HttpRequest, JSON_TOKEN, looksLikeCurl, METHODS,
+  type Method, type Pair, paramsFromUrl, prettyJson, sanitizeRequest, toCurl, withQuery,
 } from "./http-model";
 import { httpStore } from "./http-store";
-import { MenuEntries, menuOn } from "./menu";
+import { type MenuEntries, menuOn } from "./menu";
 import { h, promptText } from "./ui";
 
 type Section = "params" | "headers" | "auth" | "body" | "options";

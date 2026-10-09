@@ -1,4 +1,4 @@
-import { api, Forward, KeyInfo, newProfile, Profile, Theme } from "./api";
+import { api, type Forward, type KeyInfo, newProfile, type Profile, type Theme } from "./api";
 import { allThemes, getTheme, isBuiltin, loadThemes } from "./themes";
 
 const DEFAULT_FONT = "Cascadia Mono, Consolas, 'DejaVu Sans Mono', monospace";
@@ -373,7 +373,7 @@ export async function themeDialog(current: string): Promise<string | null> {
     };
     paint();
     const swatches = h("div", { class: "swatches" },
-      ...[
+      ...([
         ["Background", () => draft.background, (v: string) => (draft.background = v)],
         ["Foreground", () => draft.foreground, (v: string) => (draft.foreground = v)],
         ["Cursor", () => draft.cursor, (v: string) => (draft.cursor = v)],
@@ -381,7 +381,7 @@ export async function themeDialog(current: string): Promise<string | null> {
         ...draft.ansi.map((_, i) => [
           (i < 8 ? "" : "Bright ") + COLOR_NAMES[i % 8], () => draft.ansi[i], (v: string) => (draft.ansi[i] = v),
         ]),
-      ].map(([l, g, s]: any) => h("label", { class: "swatch" }, color(g, s), h("span", {}, l))),
+      ] as [string, () => string, (v: string) => string][]).map(([l, g, s]) => h("label", { class: "swatch" }, color(g, s), h("span", {}, l))),
     );
     const isUser = !isBuiltin(base.id);
     area.replaceChildren(
