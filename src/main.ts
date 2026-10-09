@@ -7,18 +7,22 @@ import { FileTab } from "./file-tab";
 import { ApiTab } from "./api-tab";
 import { httpStore } from "./http-store";
 import { editProfile, manageKeysDialog, themeDialog } from "./editors";
+import { protoIcon } from "./proto-icon";
 import { contextMenu, type MenuEntries, menuOn } from "./menu";
 import { type Arrow, type Dir, type Layout, Tab } from "./panes";
 import { shellIntegrationDialog } from "./shell-integration";
 import { TerminalTab } from "./terminal-tab";
-import { ensureFont, getTheme, loadThemes } from "./themes";
+import { ensureFont, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
 import { type FindTarget, openPalette, type PaletteItem } from "./palette";
+import { fillPlaceholders, placeholders, type SavedCommand } from "./saved-commands";
+import { isQuick, parseQuickTarget, type QuickTarget, quickLabel, quickProfileFor } from "./quick-connect";
 import { h, promptText } from "./ui";
 import { windowControls } from "./window-controls";
 import { changePasswordDialog, ensureUnlocked } from "./vault-ui";
 import { listen } from "@tauri-apps/api/event";
+import { initSidebar } from "./sidebar-layout";
 
 interface Workspace {
   id: string;
@@ -66,6 +70,7 @@ const moreBtn = h("button", { class: "icon", title: "Menu and settings", onclick
   const r = moreBtn.getBoundingClientRect();
   contextMenu(r.left, r.bottom + 2, [
     { label: "Save workspace…", action: () => void saveWorkspace() },
+    { label: "Sidebar", hint: "Ctrl+Shift+B", checked: !sideLayout.isCollapsed(), action: () => sideLayout.toggle() },
     null,
     { label: "SSH keys…", action: () => void manageKeysDialog() },
     { label: "Interface colours…", action: async () => { const ui = await chromeDialog(settings.ui); if (ui) settings.ui = ui; } },
@@ -87,6 +92,11 @@ document.querySelector("#app")!.append(
     h("button", { class: "help-link", title: "Keyboard shortcuts", onclick: () => toggleHelp(settings.quakeKey, settings.quake) }, "Keyboard shortcuts", h("kbd", {}, "F1"))),
   h("main", {}, tabBar, stage, empty),
 );
+
+const sideLayout = initSidebar(document.querySelector<HTMLElement>("#app")!, document.querySelector("aside")!, sidebar, () => ({
+  groups: [...new Set(profiles.map((p) => p.group || "Ungrouped")), ...(ws.named.length ? ["Workspaces"] : [])],
+  rows: [...profiles.map((p) => ({ name: p.name, icon: p.protocol })), ...ws.named.map((w) => ({ name: w.name, icon: "workspace" as const }))],
+}));
 
 // ---------------------------------------------------------------- sidebar
 
@@ -112,18 +122,17 @@ function renderProfiles() {
       ? [h("section", {}, h("div", { class: "group" }, "Workspaces"), ...named.map(workspaceRow))]
       : []),
   );
+  sideLayout.refit();
 }
 
 function profileRow(p: Profile) {
-  const th = getTheme(p.appearance.themeId);
   const row = h("div", { class: "profile", title: describe(p), ondblclick: () => openTab(p),
     oncontextmenu: (e: MouseEvent) => {
       row.classList.add("ctx");
       menuOn(e, profileMenu(p), () => row.classList.remove("ctx"));
     } },
-    h("span", { class: "dot", style: `background:${th.background};border-color:${th.ansi[4]}` }),
-    h("span", { class: "pname" }, p.name),
-    h("span", { class: "proto" }, p.protocol.toUpperCase()));
+    protoIcon(p.protocol),
+    h("span", { class: "pname" }, p.name));
   return row;
 }
 
@@ -138,7 +147,7 @@ function workspaceRow(w: Workspace) {
         { label: "Delete…", danger: true, action: () => void deleteWorkspace(w) },
       ], () => row.classList.remove("ctx"));
     } },
-    h("span", { class: "dot ws" }),
+    protoIcon("workspace"),
     h("span", { class: "pname" }, w.name),
     h("span", { class: "proto" }, `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}`));
   return row;
@@ -236,11 +245,66 @@ function addTab(layout: Layout): Tab | null {
   t.header.addEventListener("contextmenu", (e) => menuOn(e, tabMenu(t)));
   t.closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
   t.onChange = persist;
+  t.onRetitle = renumber;
+  dragReorder(t);
   t.onPaneMenu = (e) => menuOn(e, paneMenu(t));
   tabs.push(t);
   tabBar.append(t.header);
   stage.append(t.el);
+  renumber();
   return t;
+}
+
+/** Terminal tabs on the same profile are numbered 1, 2, 3… in tab order; a lone tab keeps its plain name. */
+function renumber() {
+  const groups = new Map<string, Tab[]>();
+  for (const t of tabs) if (t instanceof Tab) groups.set(t.focused.profile.id, [...(groups.get(t.focused.profile.id) ?? []), t]);
+  for (const g of groups.values()) g.forEach((t, i) => t.setOrdinal(g.length > 1 ? i + 1 : 0));
+}
+
+/** Lets a tab header be dragged to a new place in the tab bar. */
+let dragging: AnyTab | null = null;
+function dragReorder(t: AnyTab) {
+  const el = t.header;
+  const side = (e: DragEvent) => (e.clientX < el.getBoundingClientRect().left + el.offsetWidth / 2 ? "before" : "after");
+  const clear = () => el.classList.remove("drop-before", "drop-after");
+  el.draggable = true;
+  el.addEventListener("dragstart", (e) => {
+    dragging = t;
+    e.dataTransfer?.setData("text/plain", t.title);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    el.classList.add("dragging");
+  });
+  el.addEventListener("dragend", () => {
+    dragging = null;
+    el.classList.remove("dragging");
+    for (const x of tabs) x.header.classList.remove("drop-before", "drop-after");
+  });
+  el.addEventListener("dragover", (e) => {
+    if (!dragging || dragging === t) return;
+    e.preventDefault();
+    clear();
+    el.classList.add(`drop-${side(e)}`);
+  });
+  el.addEventListener("dragleave", clear);
+  el.addEventListener("drop", (e) => {
+    const moved = dragging;
+    clear();
+    if (!moved || moved === t) return;
+    e.preventDefault();
+    tabs.splice(tabs.indexOf(moved), 1);
+    const at = tabs.indexOf(t) + (side(e) === "after" ? 1 : 0);
+    tabs.splice(at, 0, moved);
+    const next = tabs[at + 1];
+    tabBar.insertBefore(moved.header, next ? next.header : tabBar.querySelector(".tab-drag"));
+    renumber();
+    persist();
+  });
+}
+
+async function renameTab(tab: Tab) {
+  const name = await promptText("Rename tab", "Name", tab.title);
+  if (name) tab.rename(name);
 }
 
 const LAST_API = "portique.api.last";
@@ -268,6 +332,7 @@ function newApiRequest() {
 }
 
 function attach(t: FileTab | ApiTab) {
+  dragReorder(t);
   t.header.addEventListener("click", () => activate(t));
   t.header.addEventListener("auxclick", (e) => e.button === 1 && closeTab(t));
   t.header.addEventListener("contextmenu", (e) => menuOn(e, tabMenu(t)));
@@ -300,11 +365,15 @@ function activate(tab: AnyTab | null) {
   persist();
 }
 
+// Coming back to the window clears the flag on the tab in front of you.
+window.addEventListener("focus", () => active?.header.classList.remove("unread"));
+
 function closeTab(tab: AnyTab) {
   if (tab instanceof ApiTab && !tab.confirmClose()) return;
   const i = tabs.indexOf(tab);
   tabs.splice(i, 1);
   tab.dispose();
+  renumber();
   activate(active === tab ? (tabs[Math.min(i, tabs.length - 1)] ?? null) : active);
 }
 
@@ -321,6 +390,9 @@ function tabMenu(tab: AnyTab): MenuEntries {
     ...(tab.focused.profile.protocol === "ssh" ? [{ label: "Open file browser for this host", action: () => openFiles(tab.focused.profile) }, null] : []),
     { label: "Split right", hint: "Ctrl+Shift+D", action: on(() => tab.split("row")) },
     { label: "Split down", hint: "Ctrl+Shift+E", action: on(() => tab.split("col")) },
+    null,
+    { label: "Rename tab…", action: () => void renameTab(tab) },
+    ...(tab.customName ? [{ label: "Reset tab name", action: () => tab.rename(null) }] : []),
     null,
     ...(tab.paneCount > 1 ? [{ label: "Close pane", hint: "Ctrl+Shift+W", action: on(() => closePane(tab)) }] : []),
     { label: "Close tab", action: () => closeTab(tab) },
@@ -365,6 +437,7 @@ async function toggleQuake() {
 function applySettings(s: Settings) {
   settings = { ...s, ui: { ...DEFAULT_UI, ...s.ui } };
   document.documentElement.style.setProperty("--s", s.uiScale === "large" ? "1.2" : "1");
+  sideLayout.refit();
   FileTab.defaultLocalDir = s.sftpLocalDir;
   TerminalTab.gpu = s.gpu;
   for (const t of tabs) t.setGpu(s.gpu);
@@ -395,6 +468,10 @@ function paletteItems(): PaletteItem[] {
     add("This tab", "split-down", "Split down", () => tab.split("col"), { hint: "Ctrl+Shift+E" });
     if (tab.paneCount > 1) add("This tab", "close-pane", "Close pane", () => closePane(tab), { hint: "Ctrl+Shift+W" });
     if (tab.focused.hasOutput) add("This tab", "copy-output", "Copy last command output", () => void tab.focused.copyLastOutput(), { keywords: "clipboard" });
+    const term = tab.focused;
+    if (term.connected)
+      for (const c of term.profile.commands)
+        add(`${term.profile.name} commands`, `cmd:${term.profile.id}:${c.id}`, c.name, () => void runSavedCommand(term, c), { subtitle: c.text.split("\n")[0], keywords: c.text });
     if (tab.focused.profile.protocol === "ssh") add("This tab", "files-here", "Open file browser for this host", () => openFiles(tab.focused.profile), { keywords: "sftp" });
   }
   if (active) add("This tab", "close-tab", "Close tab", () => closeTab(active!));
@@ -424,12 +501,18 @@ function paletteItems(): PaletteItem[] {
     if (p) add("API", `request:${request.id}`, `${p.name}: ${request.name}`, () => { openApi(p); apiTabFor(p)?.select(request.id); }, { subtitle: `${request.method} ${request.url}`, keywords: `${request.group} api http` });
   }
 
+  if (tab && isQuick(tab.focused.profile)) {
+    const p = tab.focused.profile;
+    add("This tab", "save-quick", `Save ${p.name} as a profile…`, () => void saveQuick(p), { keywords: "quick connect keep" });
+  }
+
   // The app.
   add("App", "new-profile", "New profile…", () => void newProfile());
   add("App", "save-workspace", "Save workspace…", () => void saveWorkspace());
   add("App", "ssh-keys", "SSH keys…", () => void manageKeysDialog());
   add("App", "lock", "Lock the vault", () => void api.vaultLock().then(() => ensureUnlocked()));
   add("App", "master-pw", "Change master password…", () => void changePasswordDialog());
+  add("App", "sidebar", sideLayout.isCollapsed() ? "Show the sidebar" : "Hide the sidebar", () => sideLayout.toggle(), { hint: "Ctrl+Shift+B", keywords: "collapse full width" });
   add("App", "shortcuts", "Keyboard shortcuts", () => toggleHelp(settings.quakeKey, settings.quake), { hint: "F1" });
   add("Appearance", "ui-colours", "Interface colours…", () => void chromeDialog(settings.ui).then((ui) => { if (ui) settings.ui = ui; }));
   add("Appearance", "themes", "Terminal colour themes…", async () => { await themeDialog("portique-nuit"); await loadThemes(); renderProfiles(); });
@@ -437,6 +520,56 @@ function paletteItems(): PaletteItem[] {
   add("App", "settings", "Settings…", () => void openSettings(), { keywords: "preferences hotkey startup font size gpu drop-down" });
   add("App", "gpu", `${settings.gpu ? "Turn off" : "Turn on"} GPU rendering`, () => void toggleGpu());
   add("App", "quake", `${settings.quake ? "Turn off" : "Turn on"} drop-down mode (${settings.quakeKey})`, () => void toggleQuake());
+  return out;
+}
+
+/** Types a saved command into a terminal, asking for each `{{value}}` it names first. */
+async function runSavedCommand(term: TerminalTab, c: SavedCommand) {
+  const values: Record<string, string> = {};
+  for (const name of placeholders(c.text)) {
+    const v = await promptText(c.name, `Value for ${name}`);
+    if (v === null) return;
+    values[name] = v;
+  }
+  term.typeCommand(fillPlaceholders(c.text, values), c.mode === "run");
+}
+
+/** Opens the profile editor on a quick-connect host so it can be kept; the open tab carries on as it is. */
+async function saveQuick(p: Profile) {
+  const saved = await editProfile({ ...p, id: "" });
+  if (saved) await refresh();
+}
+
+const QUICK_USER = "portique.quick.user";
+
+/** Opens a host that isn't saved, in a new tab named after it. Asks for a user name when the text had none. */
+async function quickConnect(t: QuickTarget) {
+  let user = t.user;
+  if (!user) {
+    let last = "";
+    try { last = localStorage.getItem(QUICK_USER) ?? ""; } catch {}
+    const asked = await promptText("Quick connect", `User name for ${quickLabel(t)}`, last);
+    if (!asked) return;
+    user = asked;
+  }
+  try { localStorage.setItem(QUICK_USER, user); } catch {}
+  try {
+    openTab(await api.quickProfile(quickProfileFor(t, user)));
+  } catch (e) {
+    alert(`Can't connect:\n${String(e)}`);
+  }
+}
+
+/** Entries made from the typed text. */
+function dynamicItems(query: string): PaletteItem[] {
+  const out: PaletteItem[] = [];
+  const t = parseQuickTarget(query);
+  if (t) out.push({
+    id: `quick:${query}`, group: "Quick connect", pin: t.clear ? "top" : "bottom",
+    title: `Connect to ${quickLabel(t)}`,
+    subtitle: `${t.protocol === "ssh" ? "SSH" : "Telnet"}${t.user ? ` as ${t.user}` : ""}, not saved`,
+    run: () => void quickConnect(t),
+  });
   return out;
 }
 
@@ -451,7 +584,7 @@ function findTarget(): FindTarget | null {
   };
 }
 
-const showPalette = (mode: "commands" | "find") => openPalette({ items: paletteItems, findTarget }, mode);
+const showPalette = (mode: "commands" | "find") => openPalette({ items: paletteItems, dynamic: dynamicItems, findTarget }, mode);
 
 // ---------------------------------------------------------------- shortcuts
 
@@ -463,6 +596,7 @@ function matchKey(e: KeyboardEvent): (() => void) | null {
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyP") return () => showPalette("commands");
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyF") return () => showPalette("find");
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyA") return () => newApiRequest();
+  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyB") return () => sideLayout.toggle();
   if (e.ctrlKey && !e.altKey && e.key === "Tab" && tabs.length) {
     return () => activate(tabs[(tabs.indexOf(active!) + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length]);
   }

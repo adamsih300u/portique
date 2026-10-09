@@ -1,4 +1,5 @@
 import { api, type Forward, type KeyInfo, newProfile, type Profile, type Protocol, type Theme } from "./api";
+import { type SavedCommand, sanitizeCommands } from "./saved-commands";
 import { apiConnectionForm } from "./api-connection";
 import { allThemes, getTheme, isBuiltin, loadThemes } from "./themes";
 
@@ -129,6 +130,31 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
     field("Start in this folder on the server", remoteDir),
     h("p", { class: "muted" }, "Leave blank to use the default from Settings, and the login folder on the server."));
 
+  // saved commands (terminals)
+  const cmds: SavedCommand[] = structuredClone(sanitizeCommands(p.commands));
+  const cmdRows = h("div", { class: "cmds" });
+  const cmdTitle = h("span", {});
+  const renderCmds = () => {
+    cmdTitle.textContent = cmds.length ? `Saved commands (${cmds.length})` : "Saved commands";
+    cmdRows.replaceChildren(...cmds.map((c) => {
+      const cname = h("input", { value: c.name, placeholder: "Name", spellcheck: false });
+      const text = h("input", { value: c.text, placeholder: "Command, e.g. docker ps  (use {{name}} to ask for a value)", spellcheck: false });
+      const mode = select([["run", "Run"], ["paste", "Type only"]], c.mode);
+      mode.title = "Run presses Enter for you; Type only leaves the command on the line to read or edit first";
+      cname.addEventListener("input", () => { c.name = cname.value; });
+      text.addEventListener("input", () => { c.text = text.value; });
+      mode.addEventListener("change", () => { c.mode = mode.value as SavedCommand["mode"]; });
+      return h("div", { class: "cmd" }, cname, text, mode,
+        h("button", { type: "button", class: "mini", title: "Remove", onclick: () => { cmds.splice(cmds.indexOf(c), 1); renderCmds(); } }, "✕"));
+    }));
+  };
+  renderCmds();
+  const cmdSection = h("details", { class: "fwd-section", open: cmds.length > 0 },
+    h("summary", {}, cmdTitle),
+    cmdRows,
+    h("button", { type: "button", onclick: () => { cmds.push({ id: crypto.randomUUID(), name: "", text: "", mode: "run" }); renderCmds(); } }, "+ Add command"),
+    h("p", { class: "muted" }, "Offered in the command palette (Ctrl+Shift+P) while a tab for this profile is on screen. Stored as plain text, so keep passwords and keys out of them."));
+
   // serial
   const s = p.serial;
   const serialPort = h("input", { value: s.port, list: "serial-ports", placeholder: "COM3 or /dev/ttyUSB0" });
@@ -206,30 +232,31 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
   const apiSection = h("div", {}, apiForm.el);
 
   const netSection = h("div", { class: "grid" });
-  const sshSection = h("div", { class: "grid" });
   const serialSection = h("div", { class: "grid" });
   const credSection = h("div", { class: "grid" });
   const plainWarn = h("p", { class: "muted warn" },
     "Telnet and serial are not encrypted, and the saved password is typed automatically at the first password prompt after connecting (within 60 s). Only use this on trusted networks and devices.");
 
-  netSection.append(field("Host", host), field("Port", port));
-  sshSection.append(
-    field("Authentication", authSel),
-    field("Private key", h("div", { class: "row" }, keySel, manageKeys)),
-    h("label", { class: "check" }, autoReconnect, " Reconnect automatically if the connection drops"),
-    field("Jump host", jumpSel, "Connects through another SSH profile (like ProxyJump), using its saved login."),
-    field("Host key", forgetHost, "Host keys are pinned on first connect; clear it after a legitimate key change."),
-  );
+  // Connection: where to go. Login: who you are and how you prove it. Everything else is optional and folded away.
+  const jumpField = field("Jump host", jumpSel, "Connects through another SSH profile (like ProxyJump), using its saved login.");
+  const authField = field("Authentication", authSel);
+  const keyField = field("Private key", h("div", { class: "row" }, keySel, manageKeys));
+  const passField = field("Password", pass, "Kept in the encrypted vault, never in the profile file.");
+  const clearField = h("label", { class: "check" }, clearPass, template ? " Don't copy the saved password" : " Remove saved password");
+  netSection.append(field("Host", host), field("Port", port), jumpField);
   serialSection.append(
     field("Port", serialPort), field("Baud", baud), field("Data bits", dataBits),
     field("Parity", parity), field("Stop bits", stopBits), field("Flow control", flow), portList, bauds,
   );
-  credSection.append(
-    plainWarn,
-    field("Username", user),
-    field("Password", pass, "Kept in the encrypted vault, never in the profile file."),
-    h("label", { class: "check" }, clearPass, template ? " Don't copy the saved password" : " Remove saved password"),
-  );
+  credSection.append(plainWarn, field("Username", user), authField, passField, keyField, clearField);
+
+  const sessionSection = h("details", { class: "fwd-section" },
+    h("summary", {}, "Reliability & security"),
+    h("label", { class: "check" }, autoReconnect, " Reconnect automatically if the connection drops"),
+    field("Host key", forgetHost, "Host keys are pinned on first connect; clear it after a legitimate key change."));
+  const groupSection = h("details", { class: "fwd-section", open: !!p.group },
+    h("summary", {}, "Sidebar group"),
+    field("Group", group, "Profiles with the same group are listed together in the sidebar."));
 
   const loginBlock = h("div", {}, h("h3", {}, "Login"), credSection);
   const appearanceBlock = h("div", {},
@@ -247,15 +274,18 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
     apiSection.hidden = pr !== "api";
     loginBlock.hidden = pr === "api";
     appearanceBlock.hidden = pr === "api";
-    sshSection.hidden = pr !== "ssh";
+    jumpField.hidden = pr !== "ssh";
+    authField.hidden = pr !== "ssh";
+    sessionSection.hidden = pr !== "ssh";
     fwdSection.hidden = pr !== "ssh";
     filesSection.hidden = pr !== "ssh";
+    cmdSection.hidden = pr === "api";
     serialSection.hidden = pr !== "serial";
-    keySel.closest("label")!.hidden = pr !== "ssh" || authSel.value === "password";
+    keyField.hidden = pr !== "ssh" || authSel.value === "password";
     // Password applies to everything except pure key auth.
     const needsPw = pr !== "ssh" || authSel.value !== "key";
-    pass.closest("label")!.hidden = !needsPw;
-    clearPass.closest("label")!.hidden = !needsPw;
+    passField.hidden = !needsPw;
+    clearField.hidden = !needsPw;
     if ((!p.id && !template) || Number(port.value) === DEFAULT_PORT[p.protocol]) port.value = String(DEFAULT_PORT[pr] || "");
     plainWarn.hidden = pr === "ssh" || pr === "api";
     p.protocol = pr;
@@ -267,10 +297,11 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
   const body = h(
     "div",
     { class: "editor" },
-    h("div", { class: "grid" }, field("Name", name), field("Group", group), field("Protocol", proto)),
+    h("div", { class: "grid" }, field("Name", name), field("Protocol", proto)),
     h("datalist", { id: "groups" }, ...[...new Set(allProfiles.map((x) => x.group).filter(Boolean))].map((g) => h("option", { value: g }))),
-    h("h3", {}, "Connection"), netSection, serialSection, sshSection, fwdSection, filesSection, apiSection,
+    h("h3", {}, "Connection"), netSection, serialSection, apiSection,
     loginBlock,
+    h("h3", {}, "Options"), fwdSection, filesSection, cmdSection, sessionSection, groupSection,
     appearanceBlock,
   );
 
@@ -293,6 +324,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
       jumpHost: p.protocol === "ssh" ? jumpSel.value || null : null,
       autoReconnect: autoReconnect.checked,
       forwards: live,
+      commands: p.protocol === "api" ? [] : sanitizeCommands(cmds),
       localDir: p.protocol === "ssh" ? localDir.value.trim() : "",
       remoteDir: p.protocol === "ssh" ? remoteDir.value.trim() : "",
       name: name.value.trim(), group: group.value.trim(), host: p.protocol === "api" ? apiForm.read().baseUrl : host.value.trim(),

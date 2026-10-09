@@ -20,6 +20,7 @@ Supported by the standing decision to keep the interface quiet: the entry lives 
 - `editors.ts`: `editProfile` takes `{ template, name, onSaved }`. A template pre-fills a new profile (id cleared, so it saves as a new one). New and duplicate dialogs show *Cancel*, *Create + Add Another* and *Create*; editing an existing profile still shows *Cancel* and *Save*.
 - `main.ts`: *Duplicate…* in the menu of every profile (terminal and API). `created()` refreshes the sidebar after each save, so rows appear as you go.
 - `lib.rs`, `api.ts`: new `copy_password` command.
+- A duplicate also carries the profile's saved commands, since they are part of the profile.
 
 ## How to review
 
