@@ -54,12 +54,21 @@ function strengthMeter(input: HTMLInputElement) {
 async function unlockDialog() {
   const pw = h("input", { type: "password", autocomplete: "off" });
   enterSubmits(pw);
+  // After a rollback warning, a second press of Unlock is the confirmation.
+  let acceptOlder = false;
+  pw.addEventListener("input", () => (acceptOlder = false));
   await modal("Unlock Portique", h("div", {}, field("Master password", pw)), [
     {
       label: "Unlock",
       primary: true,
       action: async () => {
-        await api.vaultUnlock(pw.value);
+        try {
+          await api.vaultUnlock(pw.value, acceptOlder);
+        } catch (e) {
+          if (!String(e).includes("vault is older than")) throw e;
+          acceptOlder = true;
+          throw new Error(`${String(e).replace(/^Error: /, "")}\n\nPress Unlock again to open it anyway.`);
+        }
         pw.value = "";
       },
     },

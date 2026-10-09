@@ -4,6 +4,9 @@
 //! Format: JSON envelope `{version, kdf, nonce, ciphertext}`. The master password is stretched
 //! with Argon2id; the payload is sealed with XChaCha20-Poly1305 (random 192-bit nonce per save)
 //! and the envelope's version + KDF parameters are authenticated as associated data.
+//! The payload also carries a `generation` that rises with every save. Each computer records the
+//! highest one it has opened in a small file outside the portable set (`vault.seen`), so a
+//! restored older `vault.bin` is noticed instead of silently decrypting.
 //! Only symmetric primitives are used, so there is nothing for Shor's algorithm to break;
 //! Grover's algorithm leaves a 256-bit key with ~128 bits of strength.
 
@@ -31,6 +34,8 @@ const VERSION: u32 = 1;
 
 /// Error text the frontend matches on to trigger its unlock prompt.
 pub const LOCKED_MSG: &str = "vault is locked";
+/// Start of the error `unlock` returns for a vault older than the last one this computer opened.
+pub const OLDER_MSG: &str = "vault is older than";
 
 /// How hard a candidate master password is to guess, with zxcvbn's advice on improving it.
 #[derive(Serialize)]
@@ -108,6 +113,9 @@ impl Envelope {
 #[derive(Serialize, Deserialize, Default)]
 struct Data {
     secrets: HashMap<String, String>,
+    /// Counts saves. Vaults written before it existed read as 0.
+    #[serde(default)]
+    generation: u64,
 }
 
 impl Drop for Data {
@@ -128,6 +136,8 @@ struct Unlocked {
 
 pub struct Vault {
     path: PathBuf,
+    /// Where the highest generation opened on this computer is kept.
+    seen: PathBuf,
     state: Option<Unlocked>,
 }
 
@@ -141,8 +151,29 @@ fn derive(password: &str, salt: &[u8], kdf: &Kdf) -> Result<Zeroizing<[u8; 32]>>
 }
 
 impl Vault {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path, state: None }
+    pub fn new(path: PathBuf, seen: PathBuf) -> Self {
+        Self { path, seen, state: None }
+    }
+
+    /// The highest generation this computer has opened; 0 if none is recorded (or the note is unreadable).
+    fn last_seen(&self) -> u64 {
+        std::fs::read_to_string(&self.seen).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
+    }
+
+    /// Best effort: a failure here only weakens rollback detection, so it never blocks the vault.
+    fn record_seen(&self, generation: u64) {
+        if let Some(dir) = self.seen.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = self.seen.with_extension("tmp");
+        if std::fs::write(&tmp, generation.to_string()).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            }
+            let _ = std::fs::rename(&tmp, &self.seen);
+        }
     }
 
     pub fn exists(&self) -> bool {
@@ -162,10 +193,15 @@ impl Vault {
         getrandom::fill(&mut salt).map_err(|e| anyhow!("no randomness available: {e}"))?;
         let key = derive(password, &salt, &kdf)?;
         self.state = Some(Unlocked { key, kdf, salt, data: Data::default(), last_used: Instant::now() });
-        self.save()
+        self.save()?;
+        // A new vault starts a new history, whatever an earlier one left behind.
+        let generation = self.unlocked()?.data.generation;
+        self.record_seen(generation);
+        Ok(())
     }
 
-    pub fn unlock(&mut self, password: &str) -> Result<()> {
+    /// Decrypts the file. Does not look at rollback or change `self`.
+    fn read(&self, password: &str) -> Result<Unlocked> {
         let env: Envelope = serde_json::from_slice(&std::fs::read(&self.path).context("cannot read vault")?)
             .context("vault file is corrupt")?;
         if env.version != VERSION {
@@ -189,7 +225,22 @@ impl Vault {
                 .map_err(|_| anyhow!("wrong master password (or the vault file was modified)"))?,
         );
         let data: Data = serde_json::from_slice(&plain).context("vault contents are corrupt")?;
-        self.state = Some(Unlocked { key, kdf: env.kdf, salt, data, last_used: Instant::now() });
+        Ok(Unlocked { key, kdf: env.kdf, salt, data, last_used: Instant::now() })
+    }
+
+    /// Opens the vault. A file whose generation is below the last one this computer opened was
+    /// probably restored from an older copy; that fails with `OLDER_MSG` unless `accept_older`.
+    pub fn unlock(&mut self, password: &str, accept_older: bool) -> Result<()> {
+        let st = self.read(password)?;
+        let (found, seen) = (st.data.generation, self.last_seen());
+        if found < seen && !accept_older {
+            bail!(
+                "{OLDER_MSG} the last one opened on this computer (saved {found} times, was {seen}). \
+                 It may be a restored backup or a swapped file, and anything changed since then is missing."
+            );
+        }
+        self.record_seen(found);
+        self.state = Some(st);
         Ok(())
     }
 
@@ -201,8 +252,7 @@ impl Vault {
         require_strong(new)?;
         let kdf = self.unlocked()?.kdf;
         // Re-verify the old password against the file rather than trusting the unlocked session.
-        let mut probe = Vault::new(self.path.clone());
-        probe.unlock(old)?;
+        self.read(old)?;
         let mut salt = vec![0u8; 16];
         getrandom::fill(&mut salt).map_err(|e| anyhow!("no randomness available: {e}"))?;
         let key = derive(new, &salt, &kdf)?;
@@ -261,6 +311,18 @@ impl Vault {
     }
 
     fn save(&mut self) -> Result<()> {
+        let st = self.state.as_mut().ok_or_else(|| anyhow!(LOCKED_MSG))?;
+        st.data.generation += 1;
+        let result = self.write_file();
+        if result.is_err() {
+            if let Some(st) = self.state.as_mut() {
+                st.data.generation -= 1;
+            }
+        }
+        result
+    }
+
+    fn write_file(&self) -> Result<()> {
         let st = self.state.as_ref().ok_or_else(|| anyhow!(LOCKED_MSG))?;
         let plain = Zeroizing::new(serde_json::to_vec(&st.data)?);
         let nonce = XNonce::generate();
@@ -284,13 +346,17 @@ impl Vault {
             std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
         }
         std::fs::rename(&tmp, &self.path)?;
+        self.record_seen(st.data.generation);
         Ok(())
     }
 }
 
 static VAULT: LazyLock<Mutex<Vault>> = LazyLock::new(|| {
     let dir = store::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    Mutex::new(Vault::new(dir.join("vault.bin")))
+    // The note of the newest vault opened lives in the machine-local data folder, not next to
+    // `vault.bin`, so copying or syncing the portable files never carries it along.
+    let seen = dirs::data_local_dir().map(|d| d.join("portique")).unwrap_or_else(|| dir.clone()).join("vault.seen");
+    Mutex::new(Vault::new(dir.join("vault.bin"), seen))
 });
 
 pub fn global() -> MutexGuard<'static, Vault> {
@@ -321,8 +387,13 @@ mod tests {
 
     fn vault() -> (tempfile::TempDir, Vault) {
         let d = tempfile::tempdir().unwrap();
-        let v = Vault::new(d.path().join("vault.bin"));
+        let v = again(&d);
         (d, v)
+    }
+
+    /// A second handle on the same vault file and the same "seen" note, like a restart.
+    fn again(d: &tempfile::TempDir) -> Vault {
+        Vault::new(d.path().join("vault.bin"), d.path().join("local").join("vault.seen"))
     }
 
     #[test]
@@ -332,8 +403,8 @@ mod tests {
         v.set("a", "s3cret").unwrap();
         v.lock();
         assert_eq!(v.get("a").unwrap_err().to_string(), LOCKED_MSG);
-        let mut v2 = Vault::new(d.path().join("vault.bin"));
-        v2.unlock(PW).unwrap();
+        let mut v2 = again(&d);
+        v2.unlock(PW, false).unwrap();
         assert_eq!(v2.get("a").unwrap().as_deref(), Some("s3cret"));
     }
 
@@ -352,8 +423,98 @@ mod tests {
         assert!(v.create("short", FAST).is_err());
         v.create(PW, FAST).unwrap();
         v.lock();
-        assert!(v.unlock("pylon-quartz-marmot-velvet-8").is_err());
+        assert!(v.unlock("pylon-quartz-marmot-velvet-8", false).is_err());
         assert!(!v.is_unlocked());
+    }
+
+    #[test]
+    fn restored_older_vault_is_refused_until_accepted() {
+        let (d, mut v) = vault();
+        let file = d.path().join("vault.bin");
+        v.create(PW, FAST).unwrap();
+        v.set("a", "1").unwrap();
+        let backup = std::fs::read(&file).unwrap();
+        v.set("b", "2").unwrap();
+        v.lock();
+        // Same computer, older file put back.
+        std::fs::write(&file, &backup).unwrap();
+        let e = v.unlock(PW, false).unwrap_err().to_string();
+        assert!(e.starts_with(OLDER_MSG), "{e}");
+        assert!(!v.is_unlocked());
+        // The user says yes: it opens, and the note drops to match.
+        v.unlock(PW, true).unwrap();
+        assert!(v.contains("a").unwrap() && !v.contains("b").unwrap());
+        v.lock();
+        again(&d).unlock(PW, false).unwrap();
+    }
+
+    #[test]
+    fn rollback_past_a_password_change_is_caught() {
+        let (d, mut v) = vault();
+        let file = d.path().join("vault.bin");
+        v.create(PW, FAST).unwrap();
+        let before = std::fs::read(&file).unwrap();
+        v.change_password(PW, PW2).unwrap();
+        v.lock();
+        // An attacker who learned the old password restores the old file.
+        std::fs::write(&file, &before).unwrap();
+        assert!(v.unlock(PW, false).unwrap_err().to_string().starts_with(OLDER_MSG));
+    }
+
+    #[test]
+    fn a_new_computer_trusts_the_file_and_then_tracks_it() {
+        let (d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        v.set("a", "1").unwrap();
+        v.lock();
+        // Copy only the portable file to a machine with no note.
+        let d2 = tempfile::tempdir().unwrap();
+        std::fs::copy(d.path().join("vault.bin"), d2.path().join("vault.bin")).unwrap();
+        let mut w = again(&d2);
+        w.unlock(PW, false).unwrap();
+        w.set("b", "2").unwrap();
+        w.lock();
+        w.unlock(PW, false).unwrap();
+        assert!(w.contains("b").unwrap());
+    }
+
+    #[test]
+    fn generation_rises_on_every_save_and_failed_saves_do_not_count() {
+        let (d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        let seen = || std::fs::read_to_string(d.path().join("local").join("vault.seen")).unwrap();
+        assert_eq!(seen(), "1");
+        v.set("a", "1").unwrap();
+        v.set("a", "2").unwrap();
+        assert_eq!(seen(), "3");
+        v.delete("a").unwrap();
+        assert_eq!(seen(), "4");
+        // Make the next write fail: a directory where the temporary file would go.
+        std::fs::create_dir(d.path().join("vault.tmp")).unwrap();
+        assert!(v.set("b", "1").is_err());
+        assert_eq!(seen(), "4");
+        std::fs::remove_dir(d.path().join("vault.tmp")).unwrap();
+        v.set("b", "1").unwrap();
+        assert_eq!(seen(), "5");
+    }
+
+    #[test]
+    fn payloads_written_before_the_counter_still_load() {
+        let old: Data = serde_json::from_str(r#"{"secrets":{"a":"1"}}"#).unwrap();
+        assert_eq!(old.generation, 0);
+        assert_eq!(old.secrets["a"], "1");
+    }
+
+    #[test]
+    fn a_missing_note_is_trusted() {
+        let (d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        v.set("a", "1").unwrap();
+        v.lock();
+        // Wipe the note, as on a computer that has never seen this vault.
+        std::fs::remove_file(d.path().join("local").join("vault.seen")).unwrap();
+        v.unlock(PW, false).unwrap();
+        assert!(v.contains("a").unwrap());
     }
 
     #[test]
@@ -390,7 +551,7 @@ mod tests {
         let mut env: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
         env["kdf"]["t"] = 2.into();
         std::fs::write(&p, serde_json::to_vec(&env).unwrap()).unwrap();
-        assert!(v.unlock(PW).is_err());
+        assert!(v.unlock(PW, false).is_err());
     }
 
     #[test]
@@ -411,9 +572,9 @@ mod tests {
         v.set("a", "b").unwrap();
         assert!(v.change_password("wrong wrong wrong", PW2).is_err());
         v.change_password(PW, PW2).unwrap();
-        let mut v2 = Vault::new(d.path().join("vault.bin"));
-        assert!(v2.unlock(PW).is_err());
-        v2.unlock(PW2).unwrap();
+        let mut v2 = again(&d);
+        assert!(v2.unlock(PW, false).is_err());
+        v2.unlock(PW2, false).unwrap();
         assert_eq!(v2.get("a").unwrap().as_deref(), Some("b"));
     }
 
@@ -427,7 +588,7 @@ mod tests {
         env["kdf"]["m"] = 4_000_000_000u64.into();
         std::fs::write(&p, serde_json::to_vec(&env).unwrap()).unwrap();
         let t = Instant::now();
-        assert!(v.unlock(PW).unwrap_err().to_string().contains("unreasonable"));
+        assert!(v.unlock(PW, false).unwrap_err().to_string().contains("unreasonable"));
         assert!(t.elapsed() < Duration::from_secs(1));
     }
 

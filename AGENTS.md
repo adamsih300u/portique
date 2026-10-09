@@ -78,5 +78,6 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - A **local terminal** starts only from a shell Rust found, by id, and only when the settings turn it on; the interface never names a program. → [ADR-0010](docs/adr/0010-local-shells-start-by-id.md)
 - **Server tools run beside the shell**, on a new channel of its connection, only while it is connected; a person must be able to see what a tool will change before it runs. → [ADR-0011](docs/adr/0011-server-commands-run-beside-the-shell.md)
 - A server tool that **changes** something declares an `action`: the dialog shows the exact command first, nothing runs until the person presses the button, and root comes only from `sudo -n`; no tool enters a password. → [ADR-0012](docs/adr/0012-server-changes-show-their-command-first.md)
+- **An older `vault.bin` is refused** until the person confirms; the vault carries a save counter and each computer remembers the highest it opened in `vault.seen`. Never store that note beside `vault.bin`. → [ADR-0013](docs/adr/0013-older-vault-is-refused.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.

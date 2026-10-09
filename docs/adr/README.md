@@ -44,5 +44,6 @@ Style, so a record reads in under a minute:
 | [0010](0010-local-shells-start-by-id.md) | A local terminal starts from a detected shell, by id | accepted |
 | [0011](0011-server-commands-run-beside-the-shell.md) | Server commands run on a new channel of the open shell's connection | accepted |
 | [0012](0012-server-changes-show-their-command-first.md) | A server tool that changes something shows its command first and never enters a password | accepted |
+| [0013](0013-older-vault-is-refused.md) | A vault older than the last one opened is refused | accepted |
 
 The same decisions are summarised for agents under *Standing decisions* in [AGENTS.md](../../AGENTS.md).

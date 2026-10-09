@@ -218,8 +218,8 @@ async fn vault_create(password: String) -> Res<()> {
 }
 
 #[tauri::command]
-async fn vault_unlock(password: String) -> Res<()> {
-    tauri::async_runtime::spawn_blocking(move || vault::global().unlock(&password))
+async fn vault_unlock(password: String, accept_older: bool) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(move || vault::global().unlock(&password, accept_older))
         .await
         .map_err(|e| e.to_string())?
         .map_err(err)

@@ -266,7 +266,8 @@ export interface ToolPorts {
 export const api = {
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
   vaultCreate: (password: string) => invoke<void>("vault_create", { password }),
-  vaultUnlock: (password: string) => invoke<void>("vault_unlock", { password }),
+  /** `acceptOlder` opens a vault whose saved version is behind the last one this computer opened. */
+  vaultUnlock: (password: string, acceptOlder = false) => invoke<void>("vault_unlock", { password, acceptOlder }),
   vaultPasswordStrength: (password: string) => invoke<PasswordStrength>("vault_password_strength", { password }),
   vaultLock: () => invoke<void>("vault_lock"),
   vaultTouch: () => invoke<void>("vault_touch"),
