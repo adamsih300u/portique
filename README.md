@@ -43,7 +43,11 @@ One-time: `rustup target add x86_64-pc-windows-gnu` and install `mingw-w64`, `na
     cd src-tauri
     cargo build --release --target x86_64-pc-windows-gnu --features custom-protocol
 
-`--features custom-protocol` is required: without it the window tries to reach the dev server. The result is `target/x86_64-pc-windows-gnu/release/portique.exe`; ship it in a folder together with `WebView2Loader.dll` (same directory) and `THIRD-PARTY-NOTICES.md`. It needs the WebView2 runtime, which Windows 10/11 include. CI builds the official Windows executable natively, so this is only for local test builds.
+`--features custom-protocol` is required: without it the window tries to reach the dev server. The result is `target/x86_64-pc-windows-gnu/release/portique.exe`; ship it in a folder together with `WebView2Loader.dll` (same directory) `LICENSE`, `THIRD-PARTY-NOTICES.md` and `THIRD-PARTY-LICENSES.md`. It needs the WebView2 runtime, which Windows 10/11 include. CI builds the official Windows executable natively, so this is only for local test builds.
+
+## Licence
+
+Portique is MIT licensed, see `LICENSE`. Third-party notices are in `THIRD-PARTY-NOTICES.md` and `THIRD-PARTY-LICENSES.md`; after changing dependencies run `npm run licenses` to regenerate the latter.
 
 ## Branches, builds and releases
 
