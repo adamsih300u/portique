@@ -224,6 +224,7 @@ function addTab(layout: Layout): Tab | null {
   t.closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
   t.onChange = persist;
   t.onRetitle = renumber;
+  dragReorder(t);
   t.onPaneMenu = (e) => menuOn(e, paneMenu(t));
   tabs.push(t);
   tabBar.append(t.header);
@@ -237,6 +238,46 @@ function renumber() {
   const groups = new Map<string, Tab[]>();
   for (const t of tabs) if (t instanceof Tab) groups.set(t.focused.profile.id, [...(groups.get(t.focused.profile.id) ?? []), t]);
   for (const g of groups.values()) g.forEach((t, i) => t.setOrdinal(g.length > 1 ? i + 1 : 0));
+}
+
+/** Lets a tab header be dragged to a new place in the tab bar. */
+let dragging: AnyTab | null = null;
+function dragReorder(t: AnyTab) {
+  const el = t.header;
+  const side = (e: DragEvent) => (e.clientX < el.getBoundingClientRect().left + el.offsetWidth / 2 ? "before" : "after");
+  const clear = () => el.classList.remove("drop-before", "drop-after");
+  el.draggable = true;
+  el.addEventListener("dragstart", (e) => {
+    dragging = t;
+    e.dataTransfer?.setData("text/plain", t.title);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    el.classList.add("dragging");
+  });
+  el.addEventListener("dragend", () => {
+    dragging = null;
+    el.classList.remove("dragging");
+    for (const x of tabs) x.header.classList.remove("drop-before", "drop-after");
+  });
+  el.addEventListener("dragover", (e) => {
+    if (!dragging || dragging === t) return;
+    e.preventDefault();
+    clear();
+    el.classList.add(`drop-${side(e)}`);
+  });
+  el.addEventListener("dragleave", clear);
+  el.addEventListener("drop", (e) => {
+    const moved = dragging;
+    clear();
+    if (!moved || moved === t) return;
+    e.preventDefault();
+    tabs.splice(tabs.indexOf(moved), 1);
+    const at = tabs.indexOf(t) + (side(e) === "after" ? 1 : 0);
+    tabs.splice(at, 0, moved);
+    const next = tabs[at + 1];
+    tabBar.insertBefore(moved.header, next ? next.header : tabBar.querySelector(".tab-drag"));
+    renumber();
+    persist();
+  });
 }
 
 async function renameTab(tab: Tab) {
@@ -269,6 +310,7 @@ function newApiRequest() {
 }
 
 function attach(t: FileTab | ApiTab) {
+  dragReorder(t);
   t.header.addEventListener("click", () => activate(t));
   t.header.addEventListener("auxclick", (e) => e.button === 1 && closeTab(t));
   t.header.addEventListener("contextmenu", (e) => menuOn(e, tabMenu(t)));
