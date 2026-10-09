@@ -158,6 +158,8 @@ export interface Settings {
   restoreTabs: boolean;
   sftpLocalDir: string;
   uiScale: "normal" | "large";
+  /** Minutes of inactivity before the vault locks itself; 0 = never. */
+  vaultIdleMinutes: number;
 }
 
 /** Colours of the app chrome; "" means the built-in look. */
@@ -228,7 +230,8 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   setGpu: (enabled: boolean) => invoke<void>("set_gpu", { enabled }),
   setUi: (ui: UiColours) => invoke<void>("set_ui", { ui }),
-  setPrefs: (restoreTabs: boolean, sftpLocalDir: string, uiScale: string) => invoke<void>("set_prefs", { restoreTabs, sftpLocalDir, uiScale }),
+  setPrefs: (restoreTabs: boolean, sftpLocalDir: string, uiScale: string, vaultIdleMinutes: number) =>
+    invoke<void>("set_prefs", { restoreTabs, sftpLocalDir, uiScale, vaultIdleMinutes }),
   setQuake: (enabled: boolean) => invoke<void>("set_quake", { enabled }),
   setQuakeKey: (key: string) => invoke<void>("set_quake_key", { key }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),

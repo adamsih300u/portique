@@ -33,7 +33,7 @@ interface Workspaces {
 
 type AnyTab = Tab | FileTab | ApiTab;
 
-let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal" };
+let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15 };
 let profiles: Profile[] = [];
 let ws: Workspaces = { last: { tabs: [], active: 0 }, named: [] };
 const tabs: AnyTab[] = [];

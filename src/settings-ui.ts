@@ -18,6 +18,10 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
   const scale = h("select", {},
     h("option", { value: "normal" }, "Normal"), h("option", { value: "large" }, "Large"));
   scale.value = current.uiScale;
+  const lockAfter = h("select", {},
+    ...[[0, "Never"], [1, "1 minute"], [5, "5 minutes"], [15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"]]
+      .map(([m, label]) => h("option", { value: String(m) }, String(label))));
+  lockAfter.value = String(current.vaultIdleMinutes);
   const restore = h("input", { type: "checkbox", checked: current.restoreTabs });
   const gpu = h("input", { type: "checkbox", checked: current.gpu });
   const quake = h("input", { type: "checkbox", checked: current.quake });
@@ -44,6 +48,8 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
     field("Interface text size", scale, "Terminal text has its own size: Ctrl+mouse wheel (or Ctrl+ + / −, Ctrl+0 to reset) in a terminal."),
     h("h3", {}, "Startup"),
     h("label", { class: "check" }, restore, " Reopen my tabs when Portique starts"),
+    h("h3", {}, "Vault"),
+    field("Lock the vault after", lockAfter, "Counted from your last key press or click. Open connections stay open; saved passwords and keys are asked for again. \"Never\" keeps the vault unlocked until you lock it or quit."),
     h("h3", {}, "File browser"),
     field("Start in this folder on this computer", dir, "Each profile can choose its own folders in the profile editor; this is the default for the rest."),
     h("h3", {}, "Drop-down mode"),
@@ -72,7 +78,8 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
         next.restoreTabs = restore.checked;
         next.sftpLocalDir = dir.value.trim();
         next.uiScale = scale.value as Settings["uiScale"];
-        await api.setPrefs(next.restoreTabs, next.sftpLocalDir, next.uiScale);
+        next.vaultIdleMinutes = Number(lockAfter.value);
+        await api.setPrefs(next.restoreTabs, next.sftpLocalDir, next.uiScale, next.vaultIdleMinutes);
         saved = next;
       },
     },
