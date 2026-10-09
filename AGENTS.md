@@ -24,7 +24,7 @@ Portique is a Tauri 2 desktop app (Rust backend, plain TypeScript interface, no 
 
 ```
 src/            interface: main.ts (shell), api.ts (calls into Rust), *-tab.ts (tabs), http-*.ts (API client), editors.ts (dialogs), chrome.ts (looks), styles.css
-src-tauri/src/  backend: lib.rs (commands), session.rs, ssh.rs, tunnel.rs, sftp.rs, telnet.rs, serial.rs, http.rs, store.rs, vault.rs, keys.rs, window.rs
+src-tauri/src/  backend: lib.rs (commands), session.rs, ssh.rs, tunnel.rs, sftp.rs, telnet.rs, serial.rs, local.rs, http.rs, store.rs, vault.rs, keys.rs, window.rs
 docs/           guides; docs/changes/ has one file per change
 ```
 
@@ -72,5 +72,6 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - **Nothing merges into `main` or `dev` without the maintainer's approval.** Agents never merge, approve, or edit the protection rules. → [ADR-0007](docs/adr/0007-maintainer-approves-merges.md)
 - **The README is short.** Detail goes in `docs/`; long PR descriptions go in `docs/changes/`. → [ADR-0008](docs/adr/0008-short-readme.md)
 - **Italic is for the app's voice** (wordmark, tagline, empty-state messages); controls and labels are upright, and category labels are serif small-caps. → [ADR-0009](docs/adr/0009-italic-is-the-apps-voice.md)
+- A **local terminal** starts only from a shell Rust found, by id, and only when the settings turn it on; the interface never names a program. → [ADR-0010](docs/adr/0010-local-shells-start-by-id.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.

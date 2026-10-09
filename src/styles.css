@@ -48,7 +48,7 @@ section.drop { background: var(--panel2); outline: 1px solid var(--accent); outl
 .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proto { font-size: calc(10px * var(--s)); color: var(--muted); }
 .pi { display: inline-flex; flex: none; color: var(--muted); } .pi svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; } .pi .pi-fill { fill: currentColor; stroke: none; }
-.pi-ssh { color: var(--info); } .pi-telnet { color: var(--warn); } .pi-serial { color: var(--violet); } .pi-api { color: var(--accent); } .pi-sftp, .pi-workspace { color: var(--muted); }
+.pi-ssh { color: var(--info); } .pi-telnet { color: var(--warn); } .pi-serial { color: var(--violet); } .pi-api { color: var(--accent); } .pi-local { color: var(--ok); } .pi-sftp, .pi-workspace { color: var(--muted); }
 .profile:hover .pi-workspace { color: var(--text); }
 main { background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 .tabbar { display: flex; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; min-height: 33px; }

@@ -11,7 +11,7 @@ const FONTS = [
   "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Hack", "Courier New", "monospace",
 ];
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
-const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0, api: 0 };
+const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0, api: 0, local: 0 };
 
 const opt = (value: string | number, label: string, selected: boolean) =>
   h("option", { value: String(value), selected }, label);

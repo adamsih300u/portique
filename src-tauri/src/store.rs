@@ -53,6 +53,8 @@ pub enum Protocol {
     Serial,
     /// An HTTP API endpoint: opens the API client, not a terminal. Its settings are in `Profile::api`.
     Api,
+    /// A shell on this computer (`local.rs`). Never saved: its profiles exist only in memory.
+    Local,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -249,6 +251,9 @@ pub fn add_quick(p: Profile) -> Result<Profile> {
 }
 
 pub fn get_profile(id: &str) -> Result<Profile> {
+    if id.starts_with(crate::local::PREFIX) {
+        return crate::local::profile_for(id, &crate::window::load()).context("that local terminal is not turned on in the settings");
+    }
     if let Some(p) = quick_profiles().lock().unwrap().get(id) {
         return Ok(p.clone());
     }
