@@ -45,6 +45,8 @@ Shortcuts: **Ctrl+Enter** send, **Esc** cancel while waiting, **Ctrl+S** save (w
 
 Requests are sent by the Rust side of the app, not the web view, so there is no CORS.
 
+The tab, like the file browser, follows the **interface colours** (*Interface colours…* and the looks such as Ivoire or Bordeaux), never a terminal colour theme. Status colours (success, failure, method names, JSON) switch to deeper shades on a light look so they stay readable, and dialogs, menus and the palette follow the same look.
+
 ## Environments and secrets
 
 Each connection has its own **environments**: named sets of variables such as a server address or a token. Use `{{name}}` in the address, a header, the body or a sign-in. Pick the environment at the top right of the request; *Environments…* edits them. `{{$uuid}}` and `{{$timestamp}}` are always available.
