@@ -11,7 +11,7 @@ Two or three sentences a newcomer could follow. What changes for the person usin
 
 ## Why
 
-The problem or the request behind it. Link earlier change files this builds on or replaces.
+The problem or the request behind it. Link earlier change files this builds on or replaces, and the records in `docs/adr/` that support, constrain or conflict with this change (with the maintainer's ruling on any conflict).
 
 ## What changed
 

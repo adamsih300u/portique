@@ -1,10 +1,13 @@
-# ADR-NNNN: <The decision, as a short statement>
+# ADR-NNNN: <The decision, stated positively>
 
 - **Status:** proposed | accepted | superseded
-- **Recorded:** <date>, from [`<change-file>`](../changes/<change-file>.md) (D<n>)
+- **Date:** <date>
+- **Source:** [`<change-file>`](../changes/<change-file>.md), decision D<n>
+- **Supersedes:** ADR-NNNN | none
 - **Superseded by:** none
+- **Related:** ADR-NNNN (supports, constrains or conflicts, and why) | none
 
-- **Context:** What forced a choice? What mattered (users, safety, effort)?
-- **Decision:** What we do.
-- **Consequences:** What gets easier, what gets harder, what we now must keep true.
-- **Alternatives considered:** What else we looked at and why not.
+- **Context:** The situation and the forces behind the choice, in one to three sentences.
+- **Decision:** What we do, in the present tense.
+- **Consequences:** What gets easier, what costs more, what must stay true.
+- **Alternatives considered:** Each option, with a clause on why it lost.
