@@ -7,11 +7,12 @@ import { FileTab } from "./file-tab";
 import { ApiTab } from "./api-tab";
 import { httpStore } from "./http-store";
 import { editProfile, manageKeysDialog, themeDialog } from "./editors";
+import { protoIcon } from "./proto-icon";
 import { contextMenu, type MenuEntries, menuOn } from "./menu";
 import { type Arrow, type Dir, type Layout, Tab } from "./panes";
 import { shellIntegrationDialog } from "./shell-integration";
 import { TerminalTab } from "./terminal-tab";
-import { ensureFont, getTheme, loadThemes } from "./themes";
+import { ensureFont, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
 import { type FindTarget, openPalette, type PaletteItem } from "./palette";
@@ -116,15 +117,13 @@ function renderProfiles() {
 }
 
 function profileRow(p: Profile) {
-  const th = getTheme(p.appearance.themeId);
   const row = h("div", { class: "profile", title: describe(p), ondblclick: () => openTab(p),
     oncontextmenu: (e: MouseEvent) => {
       row.classList.add("ctx");
       menuOn(e, profileMenu(p), () => row.classList.remove("ctx"));
     } },
-    h("span", { class: "dot", style: `background:${th.background};border-color:${th.ansi[4]}` }),
-    h("span", { class: "pname" }, p.name),
-    h("span", { class: "proto" }, p.protocol.toUpperCase()));
+    protoIcon(p.protocol),
+    h("span", { class: "pname" }, p.name));
   return row;
 }
 
@@ -139,7 +138,7 @@ function workspaceRow(w: Workspace) {
         { label: "Delete…", danger: true, action: () => void deleteWorkspace(w) },
       ], () => row.classList.remove("ctx"));
     } },
-    h("span", { class: "dot ws" }),
+    protoIcon("workspace"),
     h("span", { class: "pname" }, w.name),
     h("span", { class: "proto" }, `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}`));
   return row;

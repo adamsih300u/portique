@@ -2,6 +2,7 @@ import { api, Channel, type FileEntry, type Listing, type Profile, type Transfer
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
 import { type MenuEntries, menuOn } from "./menu";
 import { h, modal, promptText } from "./ui";
+import { protoIcon } from "./proto-icon";
 import { ensureUnlocked } from "./vault-ui";
 
 type Side = "local" | "remote";
@@ -409,7 +410,7 @@ export class FileTab {
   static defaultLocalDir = "";
 
   constructor(readonly profile: Profile) {
-    this.header = h("div", { class: "tab filetab-header" }, this.dot, this.label, h("span", { class: "tbadge" }, h("span", { title: "File browser (SFTP)" }, "SFTP")), this.closeBtn);
+    this.header = h("div", { class: "tab filetab-header" }, this.dot, this.label, h("span", { class: "tbadge" }, protoIcon("sftp")), this.closeBtn);
     this.header.style.setProperty("--tab-bg", "var(--bg)");
     this.label.textContent = profile.name;
 
