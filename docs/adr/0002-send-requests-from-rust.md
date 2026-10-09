@@ -1,10 +1,13 @@
-# ADR-0002: API requests are sent from Rust, not the web view
+# ADR-0002: API requests are sent from Rust
 
 - **Status:** accepted
-- **Recorded:** 2026-10-09, from [`api-roadmap`](../changes/api-roadmap.md) (D2)
+- **Date:** 2026-10-09
+- **Source:** [`api-roadmap`](../changes/api-roadmap.md), decision D2
+- **Supersedes:** none
 - **Superseded by:** none
+- **Related:** none
 
-- **Context:** A browser `fetch` is bound by CORS, can't accept self-signed certificates, can't go through an SSH proxy, and would need secrets in the page.
-- **Decision:** All requests go through a `http_send` command using `reqwest`.
-- **Consequences:** No CORS, full control of TLS and proxies, cancellable. It adds a dependency and a TLS library that needs `nasm` and `cmake` to cross-compile for Windows.
-- **Alternatives considered:** `fetch` with a CORS proxy (fragile and unsafe); the Tauri HTTP plugin (less control over the pieces above).
+- **Context:** A browser `fetch` is bound by CORS, rejects self-signed certificates, cannot use an SSH proxy and would hold secrets in the page.
+- **Decision:** Route every request through the `http_send` command, which uses `reqwest`.
+- **Consequences:** Requests ignore CORS, control TLS and proxies fully, and can be cancelled. The build gains a dependency, and its TLS library needs `nasm` and `cmake` to cross-compile for Windows.
+- **Alternatives considered:** `fetch` through a CORS proxy is fragile and unsafe. The Tauri HTTP plugin offers less control over TLS and proxies.
