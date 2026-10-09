@@ -1,8 +1,8 @@
 # The API client: connections, sending from an SSH host, checks, import
 
 - **Branch:** `feature/api-roadmap` (written before the `<type>/<slug>` naming; later branches follow it)
-- **PR:** not opened yet
-- **Status:** ready for review
+- **PR:** none. This was pushed straight to `dev` (fast-forward, `46a834f..e2b7cfa`) before the branch-and-PR workflow began; later work goes through PRs.
+- **Status:** merged to `dev`
 - **Author:** Claude (agent), with Adam
 
 ## Summary

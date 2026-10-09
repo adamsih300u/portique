@@ -1,8 +1,8 @@
 # Repository guides: a short README, CONTRIBUTING, AGENTS, and a change file per branch
 
 - **Branch:** `docs/repo-guides`
-- **PR:** not opened yet. It is stacked on `feature/api-roadmap`, so open it after that one merges, or retarget it.
-- **Status:** ready for review
+- **PR:** see the draft PR from `docs/repo-guides` into `dev`
+- **Status:** in review
 - **Author:** Claude (agent), with Adam
 
 ## Summary
