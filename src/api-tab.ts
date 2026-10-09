@@ -6,6 +6,7 @@ import { httpStore } from "./http-store";
 import { exportRequests, importRequests } from "./http-transfer";
 import { contextMenu, type MenuEntries, menuOn } from "./menu";
 import { h, promptText } from "./ui";
+import { protoIcon } from "./proto-icon";
 
 const SHORT: Record<string, string> = { GET: "GET", POST: "POST", PUT: "PUT", PATCH: "PATCH", DELETE: "DEL", HEAD: "HEAD", OPTIONS: "OPT" };
 const RAIL_KEY = "portique.api.rail";
@@ -62,7 +63,7 @@ export class ApiTab {
       editConnection: () => this.opts.editConnection(this.profile),
     };
 
-    this.header = h("div", { class: "tab apitab-header" }, this.label, h("span", { class: "tbadge" }, h("span", { title: "API connection" }, "API")), this.dirtyDot, this.closeBtn);
+    this.header = h("div", { class: "tab apitab-header" }, this.label, h("span", { class: "tbadge" }, protoIcon("api")), this.dirtyDot, this.closeBtn);
     this.header.style.setProperty("--tab-bg", "var(--bg)");
     this.label.textContent = profile.name;
 
