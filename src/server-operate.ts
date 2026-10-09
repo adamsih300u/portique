@@ -1,3 +1,5 @@
+import { api, type KeyInfo } from "./api";
+import { formatInstallKey, installKeyUnix, pickKey, planInstallKey } from "./server-keys-core";
 import { fail, known, onServer, prepare, type Host } from "./server-run";
 import {
   CONTAINERS_UNIX, SERVICES_UNIX, SERVICES_WINDOWS, containerActionUnix, containerLogUnix, containerName, containerPlanUnix, followCommand, formatContainerAction,
@@ -53,6 +55,29 @@ function containerTool(host: Host, verb: CtrVerb): Tool {
   };
 }
 
+/** Puts the public half of a vault key in the server's `authorized_keys`, so a profile can sign in with it. */
+function installKeyTool(host: Host): Tool {
+  let keys: KeyInfo[] = [];
+  return {
+    id: "install-key", heading: `Install a key: ${host.name}`, title: "Install a key on this host…", hint: "let a vault key sign in to this server", keywords: "server host authorized_keys public key login passwordless sign in",
+    input: { label: "Key", hint: "the name of a key under SSH keys… in the vault" },
+    prepare: async () => {
+      await prepare(host)();
+      keys = await api.listKeys();
+    },
+    action: {
+      label: "Install",
+      idle: () => (keys.length ? `Keys in the vault:\n${keys.map((k) => `  ${k.name}  (${k.algorithm}, ${k.fingerprint})`).join("\n")}` : "The vault has no keys yet. Import one under SSH keys… first."),
+      plan: (text) => (known(host) === "windows" ? noWindows("Installing a key") : planInstallKey(pickKey(keys, text))),
+    },
+    run: async (text) => {
+      const k = pickKey(keys, text);
+      const pub = await api.keyPublic(k.id); // only the public half; the private key never leaves Rust
+      return onServer(host, 30, (os) => (os === "windows" ? noWindows("Installing a key") : { script: installKeyUnix(pub.key, k.name), read: (t) => formatInstallKey(t, k.name) }));
+    },
+  };
+}
+
 /** Services, containers and logs. Listing and reading change nothing; the rest are actions that ask first. */
 export function operateTools(host: Host): Tool[] {
   const heading = (t: string) => `${t}: ${host.name}`;
@@ -89,6 +114,7 @@ export function operateTools(host: Host): Tool[] {
       run: () => onServer(host, 45, (os) => (os === "windows" ? noWindows("Containers") : { script: CONTAINERS_UNIX, read: (t) => formatContainers(t, host.name) })),
     },
     ...(["restart", "stop", "start"] as const).map((v) => containerTool(host, v)),
+    installKeyTool(host),
     {
       id: "container-log", heading: heading("Container log"), title: "Container log…", hint: "the last 200 lines a container printed", keywords: "server host docker podman logs output errors",
       input: { label: "Container name", hint: "a name or id from the container list" },

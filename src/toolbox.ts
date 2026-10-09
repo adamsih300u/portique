@@ -36,6 +36,8 @@ export interface Tool {
     label: string;
     /** What will happen, in words and the exact command. Throws for an input that isn't valid yet. */
     plan(input: string): string;
+    /** Shown while the box is empty (the choices there are, say). */
+    idle?(): string;
     /** Offers "Type it in the terminal": types the command for the person to run themselves, and closes the dialog. */
     terminal?(input: string): void;
     /** Close the dialog once it has run. */
@@ -193,7 +195,7 @@ export async function openTool(tool: Tool) {
     result = null;
     status.textContent = "";
     const text = input?.value ?? "";
-    if (!text.trim()) return show(""), false;
+    if (!text.trim()) return show(act!.idle?.() ?? ""), false;
     try {
       show(act!.plan(text));
       return true;

@@ -33,7 +33,7 @@ docs/           guides, and one file per change in docs/changes/
 | Dialogs: profile editor, keys, themes, settings, vault | `editors.ts`, `settings-ui.ts`, `vault-ui.ts`, `host-prompts.ts` |
 | Building blocks: DOM helper and modal, context menu, command palette | `ui.ts`, `menu.ts`, `palette.ts` |
 | Palette Toolbox: the tool list and dialog (`toolbox.ts`), their logic and tests (`toolbox-core.ts`) | `toolbox.ts`, `toolbox-core.ts` |
-| Palette server tools: commands run on the connected host. Running them and telling Windows from the rest (`server-run.ts`); facts, processes and disk use (`server-tools.ts`, readers in `server-tools-core.ts`); services, containers and logs (`server-operate.ts`, scripts and readers in `server-services-core.ts`) | `server-run.ts`, `server-tools.ts`, `server-operate.ts` and the two `-core.ts` files |
+| Palette server tools: commands run on the connected host. Running them and telling Windows from the rest (`server-run.ts`); facts, processes and disk use (`server-tools.ts`, readers in `server-tools-core.ts`); services, containers and logs (`server-operate.ts`, scripts and readers in `server-services-core.ts`); putting a vault key's public half on a host (`server-keys-core.ts`) | `server-run.ts`, `server-tools.ts`, `server-operate.ts` and the three `-core.ts` files |
 | Looks: interface colours, terminal themes, emblem | `chrome.ts`, `themes.ts`, `emblem.ts` |
 | Everything else | `help.ts` (shortcut panel), `shell-integration.ts`, `window-controls.ts` |
 | All styling | `styles.css` (colours are CSS variables such as `--bg`, `--accent`, `--ok`) |
@@ -50,7 +50,7 @@ docs/           guides, and one file per change in docs/changes/
 | `toolbox.rs` | The Toolbox's network checks: name lookup, port check, TCP ping, Wake-on-LAN |
 | `http.rs` | The API client's HTTP engine: variables, OAuth, proxy |
 | `store.rs` | Profiles, themes and the config folder |
-| `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys |
+| `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys (`keys::public` gives out only a key's public half) |
 | `window.rs` | Settings, drop-down mode, opening links |
 
 ### How the two halves talk
