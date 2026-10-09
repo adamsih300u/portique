@@ -154,7 +154,7 @@ pub fn start(
             Err(e) => match e.downcast_ref::<NeedsInput>() {
                 Some(NeedsInput("password")) => em.status("need-password", "Password required"),
                 Some(_) => em.status("need-passphrase", "Key passphrase required"),
-                None => em.status("error", &format!("{e:#}")),
+                None => em.status("error", &crate::explain::friendly(&e, &profile)),
             },
         }
         sessions.map.lock().unwrap().remove(&sid);

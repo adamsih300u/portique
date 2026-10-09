@@ -1,4 +1,5 @@
 mod agent;
+mod explain;
 mod http;
 mod ipc;
 mod keys;
