@@ -46,6 +46,7 @@ export class Tab {
   private readonly label = h("span", { class: "tlabel" });
   private readonly extra = h("span", { class: "tbadge" });
   readonly closeBtn = h("button", { class: "mini", title: "Close tab" }, "✕");
+  private shown = false;
   private root!: Node;
   private focusedLeaf!: Leaf;
   /** Layout, focus or session state changed (used for persistence). */
@@ -119,6 +120,7 @@ export class Tab {
     const term = new TerminalTab(p);
     const leaf = new Leaf(term);
     term.onState = () => this.render();
+    term.onSettled = () => this.flag();
     term.onTunnels = () => this.render();
     term.onFocus = () => this.focus(leaf, false);
     term.onMenu = (e) => {
@@ -253,9 +255,16 @@ export class Tab {
     return leavesOf(this.root).some((l) => l.term.profile.id === id);
   }
 
+  /** Marks the tab as having something new, unless it is already in front of the user. */
+  private flag() {
+    if (!this.shown || !document.hasFocus()) this.header.classList.add("unread");
+  }
+
   show(on: boolean) {
+    this.shown = on;
     this.el.style.display = on ? "" : "none";
     this.header.classList.toggle("active", on);
+    if (on) this.header.classList.remove("unread");
     this.header.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     if (on) {
       this.refit();
