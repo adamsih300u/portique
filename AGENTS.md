@@ -50,7 +50,7 @@ Windows executable from Linux: see [CONTRIBUTING.md](CONTRIBUTING.md#a-windows-b
 
 1. **Work in a worktree** under `.claude/worktrees/` on a branch off `dev`, named `<type>/<slug>` (`feat`, `fix`, `docs`, `refactor`, `chore`). Reuse an existing build cache with `CARGO_TARGET_DIR` and a symlinked `node_modules` if you can.
 2. **Keep it small.** One branch is one PR is one change file. If it needs two sentences too many to describe, split it.
-3. **Write `docs/changes/<slug>.md`** from [docs/changes/TEMPLATE.md](docs/changes/TEMPLATE.md) as you go. It holds the long description and the decisions.
+3. **Write `docs/changes/<slug>.md`** from [docs/changes/TEMPLATE.md](docs/changes/TEMPLATE.md) as you go. It holds the long description and the decisions. CI checks that the file is new and has every section and decision field; run `node scripts/check-change-file.mjs origin/dev` before you push.
 4. **Record decisions ADR-style** in that file: context, decision, consequences, alternatives considered. If a decision will keep constraining later work, also write it as a numbered record in [docs/adr/](docs/adr/README.md) (copy `docs/adr/TEMPLATE.md`) and add a line to *Standing decisions* below.
 5. **Commit with a Conventional Commit message** (`feat(api): …`, `fix(ui): …`). The body says why. Add whatever attribution trailer your environment asks for.
 6. **Open the PR into `dev`** with a Conventional Commit title and a short body from `.github/pull_request_template.md`: what, why, link to the change file. Don't paste the long description into the PR.
