@@ -6,7 +6,7 @@ import { applyChrome, chromeDialog, DEFAULT_UI, PRESET_NAMES, presetUi } from ".
 import { FileTab } from "./file-tab";
 import { ApiTab } from "./api-tab";
 import { httpStore } from "./http-store";
-import { editProfile, manageKeysDialog, themeDialog } from "./editors";
+import { editProfile, localLookDialog, manageKeysDialog, themeDialog } from "./editors";
 import { protoIcon } from "./proto-icon";
 import { contextMenu, type MenuEntries, menuOn } from "./menu";
 import { type Arrow, type Dir, type Layout, Tab } from "./panes";
@@ -219,6 +219,8 @@ function profileMenu(p: Profile): MenuEntries {
         { label: "Open in split right", action: () => splitActive("row", p) },
         { label: "Open in split below", action: () => splitActive("col", p) },
       ] : []),
+      null,
+      { label: "Appearance…", action: () => void localAppearance(p) },
     ];
   }
   if (p.protocol === "api") {
@@ -524,6 +526,18 @@ async function loadLocal() {
   localTerms = await api.listLocalTerminals().catch(() => []);
 }
 
+/** Opens the look dialog for a local shell; it is saved by the dialog and shown at once in every tab on that shell. */
+async function localAppearance(p: Profile) {
+  const look = await localLookDialog(p);
+  if (look) adoptLocalLook(p, look);
+}
+
+function adoptLocalLook(p: Profile, look: Profile["appearance"]) {
+  const updated = { ...p, appearance: look };
+  localTerms = localTerms.map((x) => (x.id === p.id ? updated : x));
+  for (const t of tabs) t.applyProfile(updated);
+}
+
 // ---------------------------------------------------------------- command palette
 
 async function applyPreset(name: string) {
@@ -577,6 +591,10 @@ function paletteItems(): PaletteItem[] {
     if (p) add("API", `request:${request.id}`, `${p.name}: ${request.name}`, () => { openApi(p); apiTabFor(p)?.select(request.id); }, { subtitle: `${request.method} ${request.url}`, keywords: `${request.group} api http` });
   }
 
+  if (tab && tab.focused.profile.protocol === "local") {
+    const p = localTerms.find((x) => x.id === tab.focused.profile.id);
+    if (p) add("This tab", "local-look", `Appearance of ${p.name}…`, () => void localAppearance(p), { keywords: "theme font colours cursor local terminal" });
+  }
   if (tab && isQuick(tab.focused.profile)) {
     const p = tab.focused.profile;
     add("This tab", "save-quick", `Save ${p.name} as a profile…`, () => void saveQuick(p), { keywords: "quick connect keep" });
@@ -778,8 +796,13 @@ let zoomTimer: number | undefined;
 TerminalTab.onFontSize = (p, size) => {
   clearTimeout(zoomTimer);
   zoomTimer = window.setTimeout(async () => {
-    const cur = profiles.find((x) => x.id === p.id);
+    const cur = profiles.find((x) => x.id === p.id) ?? localTerms.find((x) => x.id === p.id);
     if (!cur || cur.appearance.fontSize === size) return;
+    if (cur.protocol === "local") {
+      const look = { ...cur.appearance, fontSize: size };
+      if (await api.setLocalLook(cur.id, look).then(() => true, () => false)) adoptLocalLook(cur, look);
+      return;
+    }
     const saved = await api.saveProfile({ ...cur, appearance: { ...cur.appearance, fontSize: size } }).catch(() => null);
     if (!saved) return;
     profiles = profiles.map((x) => (x.id === saved.id ? saved : x));

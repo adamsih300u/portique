@@ -253,6 +253,8 @@ export const api = {
   listLocalShells: () => invoke<LocalShell[]>("list_local_shells"),
   /** The local terminals the settings turn on, as profiles (never saved; empty when they are off). */
   listLocalTerminals: async () => (await invoke<Profile[]>("list_local_terminals")).map(withDefaults),
+  /** Remembers the look of one local terminal (`id` is its profile id, `local:<shell>`). */
+  setLocalLook: (id: string, look: Profile["appearance"]) => invoke<void>("set_local_look", { id, look }),
   setLocalTerminals: (enabled: boolean, shells: string[]) => invoke<void>("set_local_terminals", { enabled, shells }),
   setQuake: (enabled: boolean) => invoke<void>("set_quake", { enabled }),
   setQuakeKey: (key: string) => invoke<void>("set_quake_key", { key }),

@@ -36,6 +36,8 @@ pub struct Settings {
     pub local_terminals: bool,
     /// Ids of the shells to offer (see `local::Shell::id`).
     pub local_shells: Vec<String>,
+    /// How each local shell looks (theme, font, cursor), by shell id; a shell not in here uses the defaults.
+    pub local_look: std::collections::HashMap<String, crate::store::Appearance>,
 }
 
 /// The idle times the settings pane offers (minutes; 0 = never).
@@ -64,7 +66,7 @@ impl UiColours {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { quake: false, quake_key: DEFAULT_KEY.into(), gpu: true, ui: UiColours::default(), restore_tabs: true, sftp_local_dir: String::new(), ui_scale: "normal".into(), vault_idle_minutes: 15, local_terminals: false, local_shells: Vec::new() }
+        Self { quake: false, quake_key: DEFAULT_KEY.into(), gpu: true, ui: UiColours::default(), restore_tabs: true, sftp_local_dir: String::new(), ui_scale: "normal".into(), vault_idle_minutes: 15, local_terminals: false, local_shells: Vec::new(), local_look: Default::default() }
     }
 }
 

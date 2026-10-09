@@ -136,6 +136,19 @@ impl Default for Appearance {
     }
 }
 
+impl Appearance {
+    /// The look ends up in CSS and the terminal's options on the frontend, so keep every field in a sane range.
+    pub fn valid(&self) -> bool {
+        let font_ok = self.font_family.len() <= 200 && !self.font_family.chars().any(|c| c.is_control() || "<>{};\\@".contains(c));
+        font_ok
+            && (6.0..=48.0).contains(&self.font_size)
+            && ["block", "underline", "bar"].contains(&self.cursor_style.as_str())
+            && self.scrollback <= 1_000_000
+            && !self.theme_id.is_empty()
+            && self.theme_id.len() <= 100
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Profile {

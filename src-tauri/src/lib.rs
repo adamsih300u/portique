@@ -357,7 +357,7 @@ async fn list_local_terminals() -> Res<Vec<Profile>> {
             return Vec::new();
         }
         let shells = local::detect();
-        s.local_shells.iter().filter_map(|id| shells.iter().find(|x| &x.id == id)).map(local::profile_of).collect()
+        s.local_shells.iter().filter_map(|id| shells.iter().find(|x| &x.id == id)).map(|x| local::profile_of(x, &s)).collect()
     })
     .await
     .map_err(|e| e.to_string())
@@ -375,6 +375,18 @@ async fn set_local_terminals(enabled: bool, shells: Vec<String>) -> Res<()> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Remembers how one local shell looks. `id` is the profile id (`local:<shell id>`).
+#[tauri::command]
+fn set_local_look(id: String, look: store::Appearance) -> Res<()> {
+    if !look.valid() {
+        return Err("that look has a value out of range".into());
+    }
+    let mut s = window::load();
+    let shell = id.strip_prefix(local::PREFIX).filter(|x| s.local_shells.iter().any(|y| y == x)).ok_or("that local terminal is not turned on")?.to_string();
+    s.local_look.insert(shell, look);
+    window::save(&s).map_err(err)
 }
 
 #[tauri::command]
@@ -595,6 +607,7 @@ pub fn run() {
             delete_profile,
             get_settings,
             list_local_shells,
+            set_local_look,
             list_local_terminals,
             set_local_terminals,
             set_ui,

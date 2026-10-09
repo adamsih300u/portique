@@ -61,8 +61,16 @@ pub fn find(id: &str) -> Option<Shell> {
     known().into_iter().find(|s| s.id == id)
 }
 
-pub fn profile_of(s: &Shell) -> Profile {
-    Profile { id: format!("{PREFIX}{}", s.id), name: s.name.clone(), protocol: Protocol::Local, auto_reconnect: false, ..Default::default() }
+/// The profile for a shell, wearing the look the settings keep for it.
+pub fn profile_of(s: &Shell, settings: &crate::window::Settings) -> Profile {
+    Profile {
+        id: format!("{PREFIX}{}", s.id),
+        name: s.name.clone(),
+        protocol: Protocol::Local,
+        auto_reconnect: false,
+        appearance: settings.local_look.get(&s.id).cloned().unwrap_or_default(),
+        ..Default::default()
+    }
 }
 
 /// The profile a session may start from: only for a shell that was found and that the settings turn on.
@@ -71,7 +79,7 @@ pub fn profile_for(id: &str, enabled: &crate::window::Settings) -> Option<Profil
     if !enabled.local_terminals || !enabled.local_shells.iter().any(|s| s == shell_id) {
         return None;
     }
-    find(shell_id).map(|s| profile_of(&s))
+    find(shell_id).map(|s| profile_of(&s, enabled))
 }
 
 // ---- finding shells -------------------------------------------------------------
@@ -274,6 +282,28 @@ mod tests {
         s.local_shells = vec!["nope".into()];
         assert!(profile_for("local:nope", &s).is_none(), "an id that was not detected is refused");
         assert!(profile_for("bash", &s).is_none(), "the prefix is required");
+    }
+
+    #[test]
+    fn a_shell_wears_the_look_saved_for_it_and_others_keep_the_defaults() {
+        let mut s = crate::window::Settings::default();
+        let look = crate::store::Appearance { theme_id: "portique-jour".into(), font_size: 18.0, ..Default::default() };
+        s.local_look.insert("bash".into(), look);
+        let bash = profile_of(&shell("bash", "bash", "/bin/bash", &[]), &s);
+        let zsh = profile_of(&shell("zsh", "zsh", "/bin/zsh", &[]), &s);
+        assert_eq!((bash.appearance.theme_id.as_str(), bash.appearance.font_size), ("portique-jour", 18.0));
+        assert_eq!(zsh.appearance.theme_id, crate::store::Appearance::default().theme_id);
+    }
+
+    #[test]
+    fn a_look_outside_the_allowed_ranges_is_refused() {
+        use crate::store::Appearance;
+        assert!(Appearance::default().valid());
+        assert!(!Appearance { font_size: 200.0, ..Default::default() }.valid());
+        assert!(!Appearance { cursor_style: "wide".into(), ..Default::default() }.valid());
+        assert!(!Appearance { font_family: "a;b{".into(), ..Default::default() }.valid());
+        assert!(!Appearance { scrollback: 5_000_000, ..Default::default() }.valid());
+        assert!(!Appearance { theme_id: String::new(), ..Default::default() }.valid());
     }
 
     #[cfg(unix)]
