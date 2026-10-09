@@ -1,4 +1,5 @@
 import { api, type Forward, type KeyInfo, newProfile, type Profile, type Protocol, type Theme } from "./api";
+import { type SavedCommand, sanitizeCommands } from "./saved-commands";
 import { apiConnectionForm } from "./api-connection";
 import { allThemes, getTheme, isBuiltin, loadThemes } from "./themes";
 
@@ -109,6 +110,31 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
     field("Start in this folder on this computer", localDir),
     field("Start in this folder on the server", remoteDir),
     h("p", { class: "muted" }, "Leave blank to use the default from Settings, and the login folder on the server."));
+
+  // saved commands (terminals)
+  const cmds: SavedCommand[] = structuredClone(sanitizeCommands(p.commands));
+  const cmdRows = h("div", { class: "cmds" });
+  const cmdTitle = h("span", {});
+  const renderCmds = () => {
+    cmdTitle.textContent = cmds.length ? `Saved commands (${cmds.length})` : "Saved commands";
+    cmdRows.replaceChildren(...cmds.map((c) => {
+      const cname = h("input", { value: c.name, placeholder: "Name", spellcheck: false });
+      const text = h("input", { value: c.text, placeholder: "Command, e.g. docker ps  (use {{name}} to ask for a value)", spellcheck: false });
+      const mode = select([["run", "Run"], ["paste", "Type only"]], c.mode);
+      mode.title = "Run presses Enter for you; Type only leaves the command on the line to read or edit first";
+      cname.addEventListener("input", () => { c.name = cname.value; });
+      text.addEventListener("input", () => { c.text = text.value; });
+      mode.addEventListener("change", () => { c.mode = mode.value as SavedCommand["mode"]; });
+      return h("div", { class: "cmd" }, cname, text, mode,
+        h("button", { type: "button", class: "mini", title: "Remove", onclick: () => { cmds.splice(cmds.indexOf(c), 1); renderCmds(); } }, "✕"));
+    }));
+  };
+  renderCmds();
+  const cmdSection = h("details", { class: "fwd-section", open: cmds.length > 0 },
+    h("summary", {}, cmdTitle),
+    cmdRows,
+    h("button", { type: "button", onclick: () => { cmds.push({ id: crypto.randomUUID(), name: "", text: "", mode: "run" }); renderCmds(); } }, "+ Add command"),
+    h("p", { class: "muted" }, "Offered in the command palette (Ctrl+Shift+P) while a tab for this profile is on screen. Stored as plain text, so keep passwords and keys out of them."));
 
   // serial
   const s = p.serial;
@@ -234,6 +260,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
     sessionSection.hidden = pr !== "ssh";
     fwdSection.hidden = pr !== "ssh";
     filesSection.hidden = pr !== "ssh";
+    cmdSection.hidden = pr === "api";
     serialSection.hidden = pr !== "serial";
     keyField.hidden = pr !== "ssh" || authSel.value === "password";
     // Password applies to everything except pure key auth.
@@ -255,7 +282,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
     h("datalist", { id: "groups" }, ...[...new Set(allProfiles.map((x) => x.group).filter(Boolean))].map((g) => h("option", { value: g }))),
     h("h3", {}, "Connection"), netSection, serialSection, apiSection,
     loginBlock,
-    h("h3", {}, "Options"), fwdSection, filesSection, sessionSection, groupSection,
+    h("h3", {}, "Options"), fwdSection, filesSection, cmdSection, sessionSection, groupSection,
     appearanceBlock,
   );
 
@@ -283,6 +310,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
           jumpHost: p.protocol === "ssh" ? jumpSel.value || null : null,
           autoReconnect: autoReconnect.checked,
           forwards: live,
+          commands: p.protocol === "api" ? [] : sanitizeCommands(cmds),
           localDir: p.protocol === "ssh" ? localDir.value.trim() : "",
           remoteDir: p.protocol === "ssh" ? remoteDir.value.trim() : "",
           name: name.value.trim(), group: group.value.trim(), host: p.protocol === "api" ? apiForm.read().baseUrl : host.value.trim(),

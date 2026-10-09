@@ -16,6 +16,7 @@ import { ensureFont, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
 import { type FindTarget, openPalette, type PaletteItem } from "./palette";
+import { fillPlaceholders, placeholders, type SavedCommand } from "./saved-commands";
 import { isQuick, parseQuickTarget, type QuickTarget, quickLabel, quickProfileFor } from "./quick-connect";
 import { h, promptText } from "./ui";
 import { windowControls } from "./window-controls";
@@ -454,6 +455,10 @@ function paletteItems(): PaletteItem[] {
     add("This tab", "split-down", "Split down", () => tab.split("col"), { hint: "Ctrl+Shift+E" });
     if (tab.paneCount > 1) add("This tab", "close-pane", "Close pane", () => closePane(tab), { hint: "Ctrl+Shift+W" });
     if (tab.focused.hasOutput) add("This tab", "copy-output", "Copy last command output", () => void tab.focused.copyLastOutput(), { keywords: "clipboard" });
+    const term = tab.focused;
+    if (term.connected)
+      for (const c of term.profile.commands)
+        add(`${term.profile.name} commands`, `cmd:${term.profile.id}:${c.id}`, c.name, () => void runSavedCommand(term, c), { subtitle: c.text.split("\n")[0], keywords: c.text });
     if (tab.focused.profile.protocol === "ssh") add("This tab", "files-here", "Open file browser for this host", () => openFiles(tab.focused.profile), { keywords: "sftp" });
   }
   if (active) add("This tab", "close-tab", "Close tab", () => closeTab(active!));
@@ -503,6 +508,17 @@ function paletteItems(): PaletteItem[] {
   add("App", "gpu", `${settings.gpu ? "Turn off" : "Turn on"} GPU rendering`, () => void toggleGpu());
   add("App", "quake", `${settings.quake ? "Turn off" : "Turn on"} drop-down mode (${settings.quakeKey})`, () => void toggleQuake());
   return out;
+}
+
+/** Types a saved command into a terminal, asking for each `{{value}}` it names first. */
+async function runSavedCommand(term: TerminalTab, c: SavedCommand) {
+  const values: Record<string, string> = {};
+  for (const name of placeholders(c.text)) {
+    const v = await promptText(c.name, `Value for ${name}`);
+    if (v === null) return;
+    values[name] = v;
+  }
+  term.typeCommand(fillPlaceholders(c.text, values), c.mode === "run");
 }
 
 /** Opens the profile editor on a quick-connect host so it can be kept; the open tab carries on as it is. */
