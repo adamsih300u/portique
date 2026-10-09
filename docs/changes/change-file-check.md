@@ -26,7 +26,7 @@ Read `problems()` in the script first: it is the whole rule. Then the `change-fi
 
 ## What was tested
 
-Ran locally: the script's tests (5 pass), the validator over every existing change file (all pass but `api-roadmap.md`, which mentions `<type>/<slug>` in prose and is not checked because only added files are), and the script against this branch. **Not run:** the workflow on GitHub (first run is this PR); the `no-change-file` label does not exist yet and must be created in the repository.
+Ran locally: the script's tests (5 pass), the validator over every existing change file (all pass but `api-roadmap.md`, which quotes the template's branch placeholder in prose and is not checked because only added files are), and the script against this branch. **Not run:** the workflow on GitHub (first run is this PR); the `no-change-file` label does not exist yet and must be created in the repository.
 
 ## Not done / follow-ups
 
