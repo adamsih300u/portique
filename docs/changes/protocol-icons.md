@@ -1,7 +1,7 @@
 # Show a connection's kind with an icon, not a swatch and a label
 
 - **Branch:** `feat/protocol-icons`
-- **PR:** not opened yet (held until after working hours)
+- **PR:** https://github.com/adamsih300u/portique/pull/25
 - **Status:** draft
 - **Author:** Claude
 
