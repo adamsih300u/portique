@@ -49,6 +49,8 @@ pub enum Protocol {
     Ssh,
     Telnet,
     Serial,
+    /// An HTTP API endpoint: opens the API client, not a terminal. Its settings are in `Profile::api`.
+    Api,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -156,6 +158,8 @@ pub struct Profile {
     pub local_dir: String,
     /// SSH only: where it starts on the server (empty: the login folder).
     pub remote_dir: String,
+    /// API only: base address, default sign-in and headers, and options. Opaque here: the frontend owns the shape.
+    pub api: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -220,6 +224,23 @@ mod tests {
             cursor: "#ffffff".into(), selection: "#333333".into(), ansi: vec!["#123456".into(); 16],
             font_family: Some("'Irix Screen Mono 15', monospace".into()), font_size: Some(15.0),
         }
+    }
+
+    #[test]
+    fn api_connections_round_trip_and_older_profiles_still_load() {
+        // A profile saved before API connections existed has no `api` field and a protocol we already knew.
+        let old: Profile = serde_json::from_str(r#"{"id":"a","name":"srv","protocol":"ssh","host":"h","port":22}"#).unwrap();
+        assert_eq!(old.protocol, Protocol::Ssh);
+        assert!(old.api.is_null());
+
+        // The frontend owns the shape of `api`; the backend must hand back exactly what it was given.
+        let json = r#"{"id":"b","name":"Orders","protocol":"api","host":"https://x.test/v1","api":{"baseUrl":"https://x.test/v1","via":"a","headers":[{"key":"X","value":"1","on":true}],"timeout":30}}"#;
+        let p: Profile = serde_json::from_str(json).unwrap();
+        assert_eq!(p.protocol, Protocol::Api);
+        let back = serde_json::to_value(&p).unwrap();
+        assert_eq!(back["protocol"], "api");
+        assert_eq!(back["api"]["baseUrl"], "https://x.test/v1");
+        assert_eq!(back["api"]["headers"][0]["key"], "X");
     }
 
     #[test]

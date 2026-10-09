@@ -40,7 +40,7 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
             librsvg2-dev libudev-dev libssl-dev libxdo-dev patchelf
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -81,17 +81,17 @@ jobs:
           base="portique-${{ steps.ver.outputs.version }}${{ inputs.version-suffix }}"
           rel=src-tauri/target/release
           mkdir -p out release
-          cp "$rel/${{ matrix.binary }}" out/
+          cp "$rel/${{ matrix.binary }}" LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-LICENSES.md out/
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            (cd out && 7z a -tzip "../release/$base-${{ matrix.name }}.zip" "${{ matrix.binary }}")
+            (cd out && 7z a -tzip "../release/$base-${{ matrix.name }}.zip" .)
           else
-            tar -C out -czf "release/$base-${{ matrix.name }}.tar.gz" "${{ matrix.binary }}"
+            tar -C out -czf "release/$base-${{ matrix.name }}.tar.gz" .
             cp "$rel"/bundle/appimage/*.AppImage "release/$base-linux-x64.AppImage"
             cp "$rel"/bundle/deb/*.deb "release/$base-linux-x64.deb"
           fi
           cd release && sha256sum * > "SHA256SUMS-${{ matrix.name }}.txt"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: portique-${{ matrix.name }}
           path: release/*

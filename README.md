@@ -1,47 +1,42 @@
 # Portique
 
-Tabbed SSH / Telnet / Serial terminal for Windows and Linux. Tauri 2 (Rust) backend, xterm.js frontend.
+*Your servers, within reach.*
 
-- **SSH** (`russh`): password, keyboard-interactive, private key, or key + password. Host keys pinned on first use.
-- **Jump hosts and port forwards** (SSH): pick another SSH profile as the *Jump host* (ProxyJump, chains up to 5 deep; jump hosts log in with their saved password or an unencrypted key). Under *Port forwards* add local (`-L`), remote (`-R`) or SOCKS5 (`-D`) forwards; they run for the life of the session and show as a `⇄` badge on the tab.
-- **Connection health**: SSH sends a keepalive every 15 s and treats ~1 minute of silence as a dropped link. The tab's dot pulses amber while Portique reconnects on its own (1, 2, 4, 8, 15, then 30 s apart, ten tries; Enter retries now, Esc stops). It stops on login problems and never prompts unattended. Switch it off per profile with *Reconnect automatically*. A reconnect is a new login, so state in the old shell is gone (use tmux/screen for that).
-- **File browser (SFTP)**: right-click an SSH profile → *Open file browser (SFTP)* (or right-click an SSH tab → *Open file browser for this host*). It logs in with the profile's own credentials, host-key pinning and jump hosts, then shows this computer on the left and the server on the right with a transfers list underneath. Drag files or folders between the panes, double-click a file (or press Enter) to copy it across, and use the right-click menu or F2 / Del / Ctrl+Shift+N to rename, delete and make folders. Folder copies are recursive; existing files are skipped or overwritten as you choose; transfers run three at a time and can be cancelled (a cancelled file is removed, never left half-written). Symlinks inside folders are skipped. It speaks SFTP only: servers without the SFTP subsystem aren't supported, and legacy `scp` isn't needed since OpenSSH's own `scp` uses SFTP these days.
-- **API requests**: press Ctrl+Shift+A (or ⋯ → *New API request*) for a request tab: method, address, then Params / Headers / Auth / Body / Options, and the response below with status, time, size, coloured JSON and headers. Ctrl+Enter sends, Ctrl+S saves (write `Folder/Name` to file it in a folder; saved requests appear in the sidebar). Paste a `curl` command into the address to import it; right-click for *Copy as cURL*. *Environments* hold `{{variables}}` (a server address, a token…); variables marked *Secret* live in the encrypted vault and are filled in by the backend, so they are never shown again and never written to the saved requests. Requests are sent from the Rust side, so there is no CORS and self-signed test servers can be allowed under Options. Not included (yet): multipart/file uploads, cookies, OAuth, sending through an SSH tunnel, response scripting.
-- **Command palette** (Ctrl+Shift+P): one box for hosts, open tabs, workspaces, splits, settings and interface looks, with fuzzy matching and your recent choices first. **Find** (Ctrl+Shift+F, or type `/` in the palette) searches the terminal's scrollback with live highlighting: Enter / Shift+Enter step through matches, Alt+C / Alt+W / Alt+R switch case, whole-word and regular-expression matching, and the current match stays selected so you can copy it.
-- **Settings** (gear → *Settings…*): interface text size (Normal / Large), reopening tabs on startup, the drop-down hotkey, GPU rendering and the file browser's default local folder. Each SSH profile can also set its own start folders (this computer and the server). Ctrl+wheel in a terminal changes its text size (Ctrl+= / Ctrl+- too, Ctrl+0 resets) and remembers it in that profile.
-- **Terminal extras**: WebGL rendering (gear → *Settings…* → GPU rendering, falls back to the normal renderer if unavailable), Unicode 11 widths, inline images (sixel and the iTerm2 protocol), OSC 8 hyperlinks (Ctrl+click opens http/https/mailto links only), OSC 52 so remote programs like tmux/vim can *set* your clipboard (reading it is never allowed), and optional font ligatures per profile.
-- **Shell integration**: with the snippet from the pane menu (*Shift+right-click → Shell integration…*) in your remote `~/.bashrc`/`~/.zshrc`, Ctrl+Shift+↑/↓ jump between prompts and *Copy last command output* appears in that menu.
-- **Drop-down mode** (gear → *Settings…*): a global hotkey (default Ctrl+`; change it under *gear → Settings…*, where you press the new keys to record them. F12 can't be used on Windows, which reserves it for debuggers) shows/hides the window docked to the top 45% of the screen, borderless and above other windows. Needs X11 or Windows; Wayland does not allow global hotkeys or window placement.
-- **Telnet**: built-in client (ECHO/SGA/TTYPE/NAWS negotiation) with optional username/password auto-fill at `login:`/`password:` prompts.
-- **Serial** (`serialport`): baud, data bits, parity, stop bits, flow control; same prompt auto-fill.
-- **Profiles**: `~/.config/portique/profiles.json` (`%APPDATA%\portique` on Windows). Profiles hold no secrets.
-- **Vault**: saved passwords, key passphrases and imported private keys live in one encrypted file, `portique/vault.bin`. Master password -> Argon2id (128 MiB, t=3, p=4) -> XChaCha20-Poly1305, header authenticated, fresh nonce per save. Auto-locks after 15 idle minutes; secrets are zeroized on lock. No recovery if the master password is lost. To move to another machine or OS, copy `vault.bin`, `profiles.json`, `keys.json`, `themes.json`, `workspaces.json` and `settings.json` from the config directory.
-- **Keys**: import in the *Keys* dialog (stored inside the vault) and assign per profile.
-- **Per-profile look**: colour theme, font, size, cursor, scrollback. Build custom themes in *Themes*. A theme can carry its own font: the built-in **SGI IRIX** theme also selects the bundled *Irix Screen Mono* font (CC0, see `THIRD-PARTY-NOTICES.md`); the font is applied when you pick the theme and can still be overridden per profile.
+Portique is a desktop app for the machines and services you look after. Everything opens as a tab in one window:
 
-Right-click a profile to connect, open it in a split, edit or delete it. Right-click a tab for split/close; Shift+right-click inside a terminal for the same plus copy/paste.
+- **Terminals** for SSH, Telnet and serial ports, with splits, saved workspaces and a command palette.
+- **A file browser** for any SSH host: your computer on one side, the server on the other, drag to copy.
+- **An API client**: point it at an endpoint, save the requests you use, check the responses, and keep tokens out of sight.
 
-**Splits and workspaces**: every tab can be split into panes (drag the divider to resize, double-click it to even out). The open tabs and layout are restored on the next launch. *gear → Save workspace…* stores the current set of tabs under a name; saved workspaces are listed at the bottom of the sidebar (double-click to open, right-click to rename/delete). Layouts are kept in `workspaces.json` and hold profile ids only.
+It runs on Windows and Linux. Under the hood it's Rust (Tauri 2) with a plain TypeScript interface and xterm.js for the terminals.
 
-Shortcuts (also listed under *Keyboard shortcuts* at the foot of the sidebar, or press F1): Ctrl+Tab / Ctrl+Shift+Tab switch tabs, Ctrl+Shift+D / Ctrl+Shift+E split right / down, Alt+Shift+arrows move between panes, Ctrl+Shift+W closes the pane (or the tab if it is the last pane), Ctrl+Shift+C/V copy/paste, right-click copies a selection or pastes.
+A few things we care about:
 
-## Develop
+- **Secrets stay secret.** Passwords, key passphrases and API tokens live in one encrypted vault, never in plain files.
+- **A quiet interface.** Right-click menus and shortcuts rather than rows of buttons, and every screen follows your chosen look (nuit, ivoire, bordeaux…).
+- **Yours, on your computer.** No account, no cloud. Settings are plain files in your config folder.
 
-Linux build deps: `pkg-config build-essential libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libudev-dev`.
+*Portique* is French for the gantry or portico you walk through to reach somewhere. That's the idea.
 
+## Try it
+
+Each release and CI run has builds for Windows (`.exe`) and Linux (binary, AppImage, `.deb`). To run from source:
+
+    npm run build
+    cd src-tauri
+    cargo build --release --target x86_64-pc-windows-gnu --features custom-protocol
+
+`--features custom-protocol` is required: without it the window tries to reach the dev server. The result is `target/x86_64-pc-windows-gnu/release/portique.exe`; ship it in a folder together with `WebView2Loader.dll` (same directory) `LICENSE`, `THIRD-PARTY-NOTICES.md` and `THIRD-PARTY-LICENSES.md`. It needs the WebView2 runtime, which Windows 10/11 include. CI builds the official Windows executable natively, so this is only for local test builds.
+
+## Licence
+
+Portique is MIT licensed, see `LICENSE`. Third-party notices are in `THIRD-PARTY-NOTICES.md` and `THIRD-PARTY-LICENSES.md`; after changing dependencies run `npm run licenses` to regenerate the latter.
     npm install
-    npm run tauri dev       # run
-    npm run tauri build     # installers
+    npm run tauri dev
 
-SSH integration tests (need local sshd instances, see `src-tauri/src/ssh.rs`; point `XDG_CONFIG_HOME` at a scratch directory first, they write a vault and profiles): `cargo test -- --ignored`.
+## Read on
 
-## Branches, builds and releases
-
-- `dev` is the integration branch; `main` is stable. Both are built by CI on every push and PR
-  (Linux x64 binary, AppImage and `.deb`, plus Windows x64 `.exe`, uploaded as workflow artifacts).
-- Commit messages / squash-merged PR titles follow [Conventional Commits](https://www.conventionalcommits.org/)
-  (`feat:`, `fix:`, `feat!:` …); PR titles are checked by CI.
-- Merging `dev` into `main` triggers release-please, which opens/updates a **release PR** that bumps the
-  version in `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` and updates `CHANGELOG.md`.
-  Merging that PR tags `vX.Y.Z`, creates the GitHub release and attaches the Linux (binary, AppImage, .deb) and Windows builds with SHA-256 sums.
-- Never edit the version by hand.
+- [Using Portique](docs/using-portique.md) is the full tour of what it can do.
+- [The API client](docs/api-client.md) covers connections, environments, checks and import.
+- [CONTRIBUTING.md](CONTRIBUTING.md) explains how the code is laid out and how we work.
+- [AGENTS.md](AGENTS.md) is the same, for AI coding agents.

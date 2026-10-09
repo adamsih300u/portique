@@ -106,6 +106,32 @@ fn has_api_secret(env_id: String, name: String) -> Res<bool> {
     vault::global().contains(&http::secret_account(&env_id, &name)).map_err(err)
 }
 
+/// Largest file the import reader will take.
+const MAX_IMPORT: u64 = 20 * 1024 * 1024;
+
+/// Reads a text file chosen in the import dialog.
+#[tauri::command]
+async fn read_text_file(path: String) -> Res<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let len = std::fs::metadata(&path).map_err(|e| format!("cannot read {path}: {e}"))?.len();
+        if len > MAX_IMPORT {
+            return Err(format!("{path} is too large to import ({} MB)", len / 1024 / 1024));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        String::from_utf8(bytes).map_err(|_| format!("{path} is not a text file"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Writes a text file chosen in the export dialog.
+#[tauri::command]
+async fn write_text_file(path: String, content: String) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(&path, content).map_err(|e| format!("cannot write {path}: {e}")))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn http_send(req: http::Request) -> Res<http::Response> {
     http::send(req).await.map_err(err)
@@ -276,14 +302,18 @@ fn set_gpu(enabled: bool) -> Res<()> {
 
 /// General preferences from the settings pane (the hotkey, drop-down mode and GPU have their own commands).
 #[tauri::command]
-fn set_prefs(restore_tabs: bool, sftp_local_dir: String, ui_scale: String) -> Res<()> {
+fn set_prefs(restore_tabs: bool, sftp_local_dir: String, ui_scale: String, vault_idle_minutes: u32) -> Res<()> {
     if sftp_local_dir.len() > 4096 || sftp_local_dir.contains('\0') {
         return Err("that folder path is not valid".into());
     }
     if !["normal", "large"].contains(&ui_scale.as_str()) {
         return Err("unknown interface size".into());
     }
+    if !window::VAULT_IDLE_CHOICES.contains(&vault_idle_minutes) {
+        return Err("unknown vault lock time".into());
+    }
     let mut s = window::load();
+    s.vault_idle_minutes = vault_idle_minutes;
     s.restore_tabs = restore_tabs;
     s.sftp_local_dir = sftp_local_dir.trim().to_string();
     s.ui_scale = ui_scale;
@@ -392,6 +422,24 @@ fn connect_sftp(
     Ok(session::start(&sessions, profile, params, Emitter::new(on_event)))
 }
 
+/// Logs in to an SSH profile and offers a local SOCKS5 proxy through it (a `proxy` status carries the
+/// port), for sending API requests from the server's point of view. Same event stream and prompts as `connect_session`.
+#[tauri::command]
+fn connect_proxy(
+    sessions: State<'_, Sessions>,
+    profile_id: String,
+    password: Option<String>,
+    passphrase: Option<String>,
+    on_event: Channel<InvokeResponseBody>,
+) -> Res<String> {
+    let profile = store::get_profile(&profile_id).map_err(err)?;
+    if profile.protocol != store::Protocol::Ssh {
+        return Err("Only SSH profiles can carry API requests".into());
+    }
+    let params = Params { password, passphrase, proxy: true, ..Default::default() };
+    Ok(session::start(&sessions, profile, params, Emitter::new(on_event)))
+}
+
 #[tauri::command]
 async fn sftp_list(id: String, path: String) -> Res<sftp::Listing> {
     sftp::list(&id, &path).await.map_err(err)
@@ -452,6 +500,7 @@ async fn local_delete(path: String) -> Res<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Sessions::default())
         .setup(|app| {
@@ -466,7 +515,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    if vault::global().lock_if_idle(vault::IDLE_LOCK) {
+                    let minutes = window::load().vault_idle_minutes;
+                    if minutes == 0 {
+                        continue;
+                    }
+                    if vault::global().lock_if_idle(std::time::Duration::from_secs(u64::from(minutes) * 60)) {
                         let _ = tauri::Emitter::emit(&handle, "vault-locked", ());
                     }
                 }
@@ -525,6 +578,9 @@ pub fn run() {
             has_api_secret,
             http_send,
             http_cancel,
+            connect_proxy,
+            read_text_file,
+            write_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

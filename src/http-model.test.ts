@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  blankAuth,
   blankRequest,
+  defaultApiSettings,
   fmtBytes,
   fmtMillis,
   fromCurl,
@@ -8,8 +10,13 @@ import {
   paramsFromUrl,
   parseQuery,
   prettyJson,
-  sanitizeData,
+  mergeHeaders,
+  resolveUrl,
+  sanitizeApiSettings,
+  sanitizeConn,
+  sanitizeFile,
   sanitizeRequest,
+  stripBase,
   splitUrl,
   toCurl,
   withQuery,
@@ -49,14 +56,12 @@ describe("query string <-> params", () => {
 });
 
 describe("sanitizing saved data", () => {
-  it("fills in missing fields and rejects bad enum values", () => {
-    const r = sanitizeRequest({ method: "NOPE" as never, bodyKind: "xml" as never, timeout: -5, url: undefined });
+  it("fills in missing request fields and rejects bad enum values", () => {
+    const r = sanitizeRequest({ method: "NOPE" as never, bodyKind: "xml" as never, url: undefined });
     expect(r.method).toBe("GET");
     expect(r.bodyKind).toBe("none");
-    expect(r.timeout).toBe(30);
     expect(r.url).toBe("");
-    expect(r.follow).toBe(true);
-    expect(r.insecure).toBe(false);
+    expect(r.auth.kind).toBe("inherit");
   });
 
   it("normalises header rows", () => {
@@ -65,13 +70,52 @@ describe("sanitizing saved data", () => {
   });
 
   it("survives garbage input", () => {
-    expect(sanitizeData(null)).toEqual({ requests: [], envs: [], activeEnv: "" });
-    expect(sanitizeData("nope")).toEqual({ requests: [], envs: [], activeEnv: "" });
+    expect(sanitizeConn(null)).toEqual({ requests: [], envs: [], activeEnv: "" });
+    expect(sanitizeConn("nope")).toEqual({ requests: [], envs: [], activeEnv: "" });
   });
 
   it("keeps the secret flag only when it is exactly true", () => {
-    const d = sanitizeData({ envs: [{ name: "dev", vars: [{ key: "k", value: "v", secret: "yes" }, { key: "t", value: "v", secret: true }] }] });
+    const d = sanitizeConn({ envs: [{ name: "dev", vars: [{ key: "k", value: "v", secret: "yes" }, { key: "t", value: "v", secret: true }] }] });
     expect(d.envs[0]?.vars.map((v) => v.secret)).toEqual([false, true]);
+  });
+
+  it("applies connection defaults and never lets a connection inherit auth", () => {
+    const s = sanitizeApiSettings({ baseUrl: " https://x.test ", timeout: -1, follow: undefined, auth: { kind: "inherit" } });
+    expect(s.baseUrl).toBe("https://x.test");
+    expect(s.timeout).toBe(30);
+    expect(s.follow).toBe(true);
+    expect(s.insecure).toBe(false);
+    expect(s.auth.kind).toBe("none");
+  });
+
+  it("treats a pre-connections file as legacy data to migrate", () => {
+    const { file, legacy } = sanitizeFile({ requests: [{ name: "old" }], envs: [] });
+    expect(file.connections).toEqual({});
+    expect(legacy?.requests[0]?.name).toBe("old");
+    expect(sanitizeFile({ connections: {} }).legacy).toBeNull();
+  });
+});
+
+describe("addresses and headers", () => {
+  it("resolves a request address against the connection base", () => {
+    expect(resolveUrl("https://x.test/v1/", "/users")).toBe("https://x.test/v1/users");
+    expect(resolveUrl("https://x.test/v1", "?a=1")).toBe("https://x.test/v1?a=1");
+    expect(resolveUrl("https://x.test/v1", "https://other.test/z")).toBe("https://other.test/z");
+    expect(resolveUrl("https://x.test/v1", "{{host}}/z")).toBe("{{host}}/z");
+    expect(resolveUrl("", "/users")).toBe("/users");
+  });
+
+  it("strips the base from a pasted full address", () => {
+    expect(stripBase("https://x.test/v1", "https://x.test/v1/users?a=1")).toBe("/users?a=1");
+    expect(stripBase("https://x.test/v1", "https://x.test/v10/users")).toBe("https://x.test/v10/users");
+  });
+
+  it("lets a request header override the connection's, ignoring case and disabled rows", () => {
+    const merged = mergeHeaders(
+      [{ key: "Accept", value: "a", on: true }, { key: "X-Off", value: "1", on: false }, { key: "X-Keep", value: "k", on: true }],
+      [{ key: "accept", value: "b", on: true }],
+    );
+    expect(merged.map((h) => `${h.key}=${h.value}`)).toEqual(["X-Keep=k", "accept=b"]);
   });
 });
 
@@ -90,11 +134,15 @@ describe("cURL", () => {
     expect(back.headers.some((h) => h.key === "X-Id" && h.value === "7")).toBe(true);
   });
 
-  it("leaves {{variables}} in place so secrets are not copied out", () => {
+  it("folds in the connection's address, headers and sign-in", () => {
+    const conn = { ...defaultApiSettings(), baseUrl: "https://x.test/v1", headers: [{ key: "X-Org", value: "7", on: true }], auth: blankAuth("bearer") };
+    conn.auth.token = "{{token}}";
     const r = blankRequest();
-    r.url = "https://x.test/";
-    r.auth = { ...r.auth, kind: "bearer", token: "{{token}}" };
-    expect(toCurl(r)).toContain("Bearer {{token}}");
+    r.url = "/users";
+    const curl = toCurl(r, conn);
+    expect(curl).toContain("'https://x.test/v1/users'");
+    expect(curl).toContain("'X-Org: 7'");
+    expect(curl).toContain("Bearer {{token}}");
   });
 
   it("detects curl commands", () => {

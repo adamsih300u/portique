@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { type ApiSettings, defaultApiSettings, sanitizeApiSettings } from "./http-model";
 
-export type Protocol = "ssh" | "telnet" | "serial";
+export type Protocol = "ssh" | "telnet" | "serial" | "api";
 export type AuthMethod = "password" | "key" | "keyAndPassword";
 
 export interface SerialSettings {
@@ -51,6 +52,8 @@ export interface Profile {
   localDir: string;
   /** SSH only: where it starts on the server ("": the login folder). */
   remoteDir: string;
+  /** API only: base address, default sign-in and headers, and options. */
+  api: ApiSettings;
 }
 
 export interface Theme {
@@ -105,6 +108,7 @@ export function newProfile(): Profile {
     forwards: [],
     localDir: "",
     remoteDir: "",
+    api: defaultApiSettings(),
   };
 }
 
@@ -154,6 +158,8 @@ export interface Settings {
   restoreTabs: boolean;
   sftpLocalDir: string;
   uiScale: "normal" | "large";
+  /** Minutes of inactivity before the vault locks itself; 0 = never. */
+  vaultIdleMinutes: number;
 }
 
 /** Colours of the app chrome; "" means the built-in look. */
@@ -179,12 +185,19 @@ export interface HttpPayload {
   url: string;
   headers: [string, string][];
   body: { kind: "none" } | { kind: "json" | "text"; text: string } | { kind: "form"; pairs: [string, string][] };
-  auth: { kind: "none" } | { kind: "bearer"; token: string } | { kind: "basic"; user: string; pass: string } | { kind: "header"; name: string; value: string };
+  auth:
+    | { kind: "none" }
+    | { kind: "bearer"; token: string }
+    | { kind: "basic"; user: string; pass: string }
+    | { kind: "header"; name: string; value: string }
+    | { kind: "oauth2"; tokenUrl: string; clientId: string; clientSecret: string; scope: string };
   insecure: boolean;
   followRedirects: boolean;
   timeoutSecs: number;
   envId: string;
   vars: Record<string, string>;
+  /** Local SOCKS5 port of an SSH session to send through. */
+  proxyPort?: number;
 }
 
 export interface HttpResult {
@@ -201,6 +214,9 @@ export interface HttpResult {
   url: string;
 }
 
+/** Profiles saved before API connections existed have no settings for one: give every profile well-formed ones. */
+const withApi = (p: Profile): Profile => ({ ...p, api: sanitizeApiSettings(p.api) });
+
 export const api = {
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
   vaultCreate: (password: string) => invoke<void>("vault_create", { password }),
@@ -208,13 +224,14 @@ export const api = {
   vaultLock: () => invoke<void>("vault_lock"),
   vaultTouch: () => invoke<void>("vault_touch"),
   vaultChangePassword: (old: string, nw: string) => invoke<void>("vault_change_password", { old, new: nw }),
-  listProfiles: () => invoke<Profile[]>("list_profiles"),
-  saveProfile: (profile: Profile) => invoke<Profile>("save_profile", { profile }),
+  listProfiles: async () => (await invoke<Profile[]>("list_profiles")).map(withApi),
+  saveProfile: async (profile: Profile) => withApi(await invoke<Profile>("save_profile", { profile })),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
   getSettings: () => invoke<Settings>("get_settings"),
   setGpu: (enabled: boolean) => invoke<void>("set_gpu", { enabled }),
   setUi: (ui: UiColours) => invoke<void>("set_ui", { ui }),
-  setPrefs: (restoreTabs: boolean, sftpLocalDir: string, uiScale: string) => invoke<void>("set_prefs", { restoreTabs, sftpLocalDir, uiScale }),
+  setPrefs: (restoreTabs: boolean, sftpLocalDir: string, uiScale: string, vaultIdleMinutes: number) =>
+    invoke<void>("set_prefs", { restoreTabs, sftpLocalDir, uiScale, vaultIdleMinutes }),
   setQuake: (enabled: boolean) => invoke<void>("set_quake", { enabled }),
   setQuakeKey: (key: string) => invoke<void>("set_quake_key", { key }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
@@ -260,6 +277,15 @@ export const api = {
   hasApiSecret: (envId: string, name: string) => guarded(() => invoke<boolean>("has_api_secret", { envId, name })),
   httpSend: (req: HttpPayload) => guarded(() => invoke<HttpResult>("http_send", { req })),
   httpCancel: (id: string) => invoke<void>("http_cancel", { id }),
+  connectProxy: (profileId: string, onEvent: Channel<ArrayBuffer>, password?: string, passphrase?: string) =>
+    invoke<string>("connect_proxy", { profileId, password: password ?? null, passphrase: passphrase ?? null, onEvent }),
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
+  writeTextFile: (path: string, content: string) => invoke<void>("write_text_file", { path, content }),
+  /** The system file chooser (the dialog plugin's own commands); null if cancelled. */
+  chooseFileToOpen: (filters: { name: string; extensions: string[] }[]) =>
+    invoke<string | null>("plugin:dialog|open", { options: { multiple: false, directory: false, filters } }),
+  chooseFileToSave: (defaultPath: string, filters: { name: string; extensions: string[] }[]) =>
+    invoke<string | null>("plugin:dialog|save", { options: { defaultPath, filters } }),
   confirmHost: (id: string, accept: boolean) => invoke<void>("confirm_host", { id, accept }),
   input: (id: string, data: Uint8Array) => invoke<void>("session_input", { id, data: Array.from(data) }),
   resize: (id: string, cols: number, rows: number) => invoke<void>("session_resize", { id, cols, rows }),

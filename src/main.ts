@@ -1,13 +1,11 @@
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
-import emblem from "./assets/portique.svg";
+import { emblem } from "./emblem";
 import { api, type Profile, type Settings, setUnlockHook } from "./api";
 import { applyChrome, chromeDialog, DEFAULT_UI, PRESET_NAMES, presetUi } from "./chrome";
 import { FileTab } from "./file-tab";
-import { environmentsDialog } from "./http-env";
-import { type HttpRequest } from "./http-model";
+import { ApiTab } from "./api-tab";
 import { httpStore } from "./http-store";
-import { ApiTab } from "./http-tab";
 import { editProfile, manageKeysDialog, themeDialog } from "./editors";
 import { contextMenu, type MenuEntries, menuOn } from "./menu";
 import { type Arrow, type Dir, type Layout, Tab } from "./panes";
@@ -35,7 +33,7 @@ interface Workspaces {
 
 type AnyTab = Tab | FileTab | ApiTab;
 
-let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal" };
+let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15 };
 let profiles: Profile[] = [];
 let ws: Workspaces = { last: { tabs: [], active: 0 }, named: [] };
 const tabs: AnyTab[] = [];
@@ -47,12 +45,12 @@ const search = h("input", { class: "search", placeholder: "Search profiles…", 
 const tabBar = h("div", { class: "tabbar" }, ...windowControls());
 const stage = h("div", { class: "stage" });
 const empty = h("div", { class: "empty" },
-  h("img", { class: "emblem", src: emblem, alt: "", draggable: false }),
+  emblem("emblem"),
   h("h1", {}, "Portique"),
   h("p", { class: "tagline" }, "Your servers, within reach"),
   h("div", { class: "filet" }, "◆"),
   h("p", {}, "Double-click a profile to connect, or create one with “+ New”."),
-  h("p", {}, "Ctrl+Shift+A opens an API request."),
+  h("p", {}, "Choose the API protocol under “+ New” to work with a web endpoint."),
   h("p", { class: "hints" }, "Right-click a profile for more · Ctrl+Shift+D / E split a tab · Ctrl+click opens links"));
 
 const GEAR = '<circle cx="8" cy="8" r="2.3"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3"/>';
@@ -67,9 +65,6 @@ const gearIcon = () => {
 const moreBtn = h("button", { class: "icon", title: "Menu and settings", onclick: () => {
   const r = moreBtn.getBoundingClientRect();
   contextMenu(r.left, r.bottom + 2, [
-    { label: "New API request", hint: "Ctrl+Shift+A", action: () => openRequest() },
-    { label: "Environments…", action: () => void environmentsDialog() },
-    null,
     { label: "Save workspace…", action: () => void saveWorkspace() },
     null,
     { label: "SSH keys…", action: () => void manageKeysDialog() },
@@ -83,7 +78,7 @@ const moreBtn = h("button", { class: "icon", title: "Menu and settings", onclick
 
 document.querySelector("#app")!.append(
   h("aside", {},
-    h("div", { class: "brand", "data-tauri-drag-region": true }, h("img", { src: emblem, alt: "", draggable: false }), h("span", {}, "Portique")),
+    h("div", { class: "brand", "data-tauri-drag-region": true }, emblem(), h("span", {}, "Portique")),
     h("div", { class: "side-head" },
       h("button", { class: "primary", onclick: () => void newProfile() }, "+ New"),
       h("button", { class: "icon", title: "Lock the vault now", onclick: async () => { await api.vaultLock(); await ensureUnlocked(); } }, "🔒"),
@@ -95,6 +90,12 @@ document.querySelector("#app")!.append(
 
 // ---------------------------------------------------------------- sidebar
 
+// Right-clicking empty space in the list offers what you can add to it (rows have their own menus).
+sidebar.addEventListener("contextmenu", (e) => menuOn(e, [
+  { label: "New profile…", action: () => void newProfile() },
+  { label: "New API connection…", action: () => void newProfile("api") },
+]));
+
 function renderProfiles() {
   const q = search.value.toLowerCase();
   const groups = new Map<string, Profile[]>();
@@ -103,17 +104,10 @@ function renderProfiles() {
     groups.set(g, [...(groups.get(g) ?? []), p]);
   }
   const named = ws.named.filter((w) => w.name.toLowerCase().includes(q));
-  const folders = new Map<string, HttpRequest[]>();
-  for (const r of httpStore.data.requests.filter((r) => `${r.name} ${r.url} ${r.group} ${r.method}`.toLowerCase().includes(q))) {
-    folders.set(r.group, [...(folders.get(r.group) ?? []), r]);
-  }
   sidebar.replaceChildren(
     ...[...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([g, list]) =>
       h("section", {}, h("div", { class: "group" }, g),
         ...list.sort((a, b) => a.name.localeCompare(b.name)).map(profileRow))),
-    ...[...folders.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([g, list]) =>
-      h("section", {}, h("div", { class: "group" }, g ? `Requests / ${g}` : "Requests"),
-        ...list.sort((a, b) => a.name.localeCompare(b.name)).map(requestRow))),
     ...(named.length
       ? [h("section", {}, h("div", { class: "group" }, "Workspaces"), ...named.map(workspaceRow))]
       : []),
@@ -131,41 +125,6 @@ function profileRow(p: Profile) {
     h("span", { class: "pname" }, p.name),
     h("span", { class: "proto" }, p.protocol.toUpperCase()));
   return row;
-}
-
-function requestRow(r: HttpRequest) {
-  const row = h("div", { class: "profile", title: r.url, ondblclick: () => openRequest(r),
-    oncontextmenu: (e: MouseEvent) => {
-      row.classList.add("ctx");
-      menuOn(e, [
-        { label: "Open", action: () => openRequest(r) },
-        null,
-        { label: "Rename…", action: () => void renameRequest(r) },
-        { label: "Move to folder…", action: () => void moveRequest(r) },
-        { label: "Duplicate", action: () => void httpStore.duplicateRequest(r.id).then((c) => c && openRequest(c)) },
-        null,
-        { label: "Delete…", danger: true, action: () => void deleteRequest(r) },
-      ], () => row.classList.remove("ctx"));
-    } },
-    h("span", { class: "dot api" }),
-    h("span", { class: "pname" }, r.name),
-    h("span", { class: `proto m-${r.method}` }, r.method));
-  return row;
-}
-
-async function renameRequest(r: HttpRequest) {
-  const name = await promptText("Rename request", "Name", r.name);
-  if (name) await httpStore.saveRequest({ ...r, name });
-}
-
-async function moveRequest(r: HttpRequest) {
-  const folder = await promptText("Move request", "Folder (leave empty for none)", r.group);
-  if (folder !== null) await httpStore.saveRequest({ ...r, group: folder });
-  else if (r.group) await httpStore.saveRequest({ ...r, group: "" }); // emptied the box: take it out of its folder
-}
-
-async function deleteRequest(r: HttpRequest) {
-  if (confirm(`Delete request "${r.name}"?`)) await httpStore.deleteRequest(r.id);
 }
 
 function workspaceRow(w: Workspace) {
@@ -186,6 +145,16 @@ function workspaceRow(w: Workspace) {
 }
 
 function profileMenu(p: Profile): MenuEntries {
+  if (p.protocol === "api") {
+    return [
+      { label: "Open", action: () => openTab(p) },
+      { label: "New request", hint: "Ctrl+Shift+A", action: () => { openApi(p); apiTabFor(p)?.newRequest(); } },
+      null,
+      { label: "Edit…", action: () => void edit(p) },
+      null,
+      { label: "Delete…", danger: true, action: () => void remove(p) },
+    ];
+  }
   return [
     { label: "Connect", action: () => openTab(p) },
     ...(p.protocol === "ssh" ? [{ label: "Open file browser (SFTP)", action: () => openFiles(p) }] : []),
@@ -201,7 +170,9 @@ function profileMenu(p: Profile): MenuEntries {
 }
 
 const describe = (p: Profile) =>
-  p.protocol === "serial" ? `${p.serial.port} @ ${p.serial.baud}` : `${p.username ? p.username + "@" : ""}${p.host}:${p.port}`;
+  p.protocol === "serial" ? `${p.serial.port} @ ${p.serial.baud}`
+    : p.protocol === "api" ? p.api.baseUrl || "API connection (no base address)"
+    : `${p.username ? p.username + "@" : ""}${p.host}:${p.port}`;
 
 async function refresh() {
   await loadThemes();
@@ -209,8 +180,11 @@ async function refresh() {
   renderProfiles();
 }
 
-async function newProfile() {
-  if (await editProfile(null)) await refresh();
+async function newProfile(protocol?: Profile["protocol"]) {
+  const saved = await editProfile(null, protocol);
+  if (!saved) return;
+  await refresh();
+  if (saved.protocol === "api") openApi(saved); // a new API connection is for working with, so open it
 }
 
 async function edit(p: Profile) {
@@ -222,7 +196,13 @@ async function edit(p: Profile) {
 }
 
 async function remove(p: Profile) {
-  if (!confirm(`Delete profile "${p.name}"?`)) return;
+  const apiNote = p.protocol === "api" ? ` Its saved requests and environments are deleted with it.` : "";
+  if (!confirm(`Delete profile "${p.name}"?${apiNote}`)) return;
+  if (p.protocol === "api") {
+    for (const t of tabs.filter((t) => t instanceof ApiTab && t.usesProfile(p.id))) { tabs.splice(tabs.indexOf(t), 1); t.dispose(); }
+    activate(tabs.includes(active as AnyTab) ? active : (tabs[tabs.length - 1] ?? null));
+    await httpStore.deleteConnection(p.id);
+  }
   await api.deleteProfile(p.id);
   await refresh();
 }
@@ -250,12 +230,28 @@ function addTab(layout: Layout): Tab | null {
   return t;
 }
 
-/** Opens a saved request (or a new empty one); an already open request is just brought forward. */
-function openRequest(saved?: HttpRequest) {
-  const open = saved && tabs.find((t): t is ApiTab => t instanceof ApiTab && t.requestId === saved.id);
+const LAST_API = "portique.api.last";
+
+const apiTabFor = (p: Profile) => tabs.find((t): t is ApiTab => t instanceof ApiTab && t.usesProfile(p.id));
+
+/** Opens an API connection as a tab (an already open one is just brought forward). */
+function openApi(p: Profile) {
+  try { localStorage.setItem(LAST_API, p.id); } catch {}
+  const open = apiTabFor(p);
   if (open) return activate(open);
-  const t = new ApiTab(saved);
-  attach(t);
+  attach(new ApiTab(p, { editConnection: (pr) => void edit(pr) }));
+}
+
+/** Ctrl+Shift+A: a new request on the connection on screen, else on the one used last, else make a first connection. */
+function newApiRequest() {
+  if (active instanceof ApiTab) return active.newRequest();
+  const all = profiles.filter((p) => p.protocol === "api").sort((a, b) => a.name.localeCompare(b.name));
+  if (!all.length) return void newProfile("api");
+  let last = "";
+  try { last = localStorage.getItem(LAST_API) ?? ""; } catch {}
+  const p = all.find((x) => x.id === last) ?? all[0];
+  openApi(p);
+  apiTabFor(p)?.newRequest();
 }
 
 function attach(t: FileTab | ApiTab) {
@@ -275,6 +271,7 @@ function openFiles(p: Profile) {
 }
 
 function openTab(p: Profile) {
+  if (p.protocol === "api") return openApi(p);
   const tab = addTab({ p: p.id });
   if (tab) activate(tab);
 }
@@ -388,7 +385,7 @@ function paletteItems(): PaletteItem[] {
     if (tab.focused.profile.protocol === "ssh") add("This tab", "files-here", "Open file browser for this host", () => openFiles(tab.focused.profile), { keywords: "sftp" });
   }
   if (active) add("This tab", "close-tab", "Close tab", () => closeTab(active!));
-  for (const t of tabs) if (t !== active) add("Tabs", `tab:${t.title}:${tabs.indexOf(t)}`, `Switch to ${t.title}`, () => activate(t), { subtitle: t instanceof FileTab ? "file browser" : t instanceof ApiTab ? "API request" : "" });
+  for (const t of tabs) if (t !== active) add("Tabs", `tab:${t.title}:${tabs.indexOf(t)}`, `Switch to ${t.title}`, () => activate(t), { subtitle: t instanceof FileTab ? "file browser" : t instanceof ApiTab ? "API" : "" });
 
   // Hosts: all connections first, then all file browsers.
   const hosts = [...profiles].sort((a, b) => a.name.localeCompare(b.name));
@@ -397,15 +394,22 @@ function paletteItems(): PaletteItem[] {
     add("Files", `files:${p.id}`, `Browse files on ${p.name}`, () => openFiles(p), { subtitle: describe(p), keywords: `sftp upload download ${p.group}` });
   for (const w of ws.named) add("Workspaces", `ws:${w.id}`, `Open workspace ${w.name}`, () => openWorkspace(w), { subtitle: `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}` });
 
-  // API requests.
-  add("API", "new-request", "New API request", () => openRequest(), { hint: "Ctrl+Shift+A", keywords: "http rest postman curl endpoint" });
-  add("API", "environments", "API environments…", () => void environmentsDialog(), { keywords: "variables secrets token" });
+  // API connections (they are also listed with the hosts above, under Connect).
+  add("API", "new-request", "New API request", () => newApiRequest(), { hint: "Ctrl+Shift+A", keywords: "http rest curl endpoint" });
+  add("API", "new-connection", "New API connection…", () => void newProfile("api"), { keywords: "http rest endpoint base url" });
   if (active instanceof ApiTab) {
     const a = active;
-    add("API", "send", "Send the request", () => void a.sendNow(), { hint: "Ctrl+Enter" });
-    add("API", "save-request", "Save the request", () => void a.save(), { hint: "Ctrl+S" });
+    add("API", "send", "Send the request", () => void a.active?.sendNow(), { hint: "Ctrl+Enter" });
+    add("API", "save-request", "Save the request", () => void a.active?.save(), { hint: "Ctrl+S" });
+    add("API", "environments", "Environments…", () => a.manageEnvironments(), { keywords: "variables secrets token" });
+    add("API", "import-requests", "Import requests…", () => void a.importFile(), { keywords: "collection openapi swagger curl file" });
+    add("API", "export-requests", "Export requests…", () => void a.exportFile(), { keywords: "backup save file" });
+    add("API", "conn-settings", "Connection settings…", () => a.editSettings(), { keywords: "base url auth headers" });
   }
-  for (const r of httpStore.data.requests) add("API", `request:${r.id}`, `Open request ${r.name}`, () => openRequest(r), { subtitle: `${r.method} ${r.url}`, keywords: `${r.group} api http` });
+  for (const { conn, request } of httpStore.all()) {
+    const p = findProfile(conn);
+    if (p) add("API", `request:${request.id}`, `${p.name}: ${request.name}`, () => { openApi(p); apiTabFor(p)?.select(request.id); }, { subtitle: `${request.method} ${request.url}`, keywords: `${request.group} api http` });
+  }
 
   // The app.
   add("App", "new-profile", "New profile…", () => void newProfile());
@@ -445,7 +449,7 @@ function matchKey(e: KeyboardEvent): (() => void) | null {
   if (e.key === "F1" && !e.ctrlKey && !e.altKey && !e.shiftKey) return () => toggleHelp(settings.quakeKey, settings.quake);
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyP") return () => showPalette("commands");
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyF") return () => showPalette("find");
-  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyA") return () => openRequest();
+  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyA") return () => newApiRequest();
   if (e.ctrlKey && !e.altKey && e.key === "Tab" && tabs.length) {
     return () => activate(tabs[(tabs.indexOf(active!) + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length]);
   }
@@ -576,14 +580,13 @@ setUnlockHook(ensureUnlocked);
 void listen("vault-locked", () => ensureUnlocked());
 
 activate(null);
-httpStore.listeners.add(renderProfiles);
 const settingsLoaded = api.getSettings().then((s) => {
   applySettings(s);
   applyChrome(settings.ui);
 }).catch(() => {});
 void ensureUnlocked().then(async () => {
   await refresh();
-  await httpStore.load();
+  if (await httpStore.load()) await refresh(); // requests saved before connections existed were moved into a connection of their own
   await loadWorkspaces();
   await settingsLoaded; // whether to reopen the last tabs is a setting
   if (settings.restoreTabs) restoreLast();
