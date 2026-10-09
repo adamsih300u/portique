@@ -11,6 +11,8 @@ export interface PaletteItem {
   keywords?: string;
   /** Shortcut shown on the right. */
   hint?: string;
+  /** For entries made from the typed text: keep above ("top") or below ("bottom") the ranked matches. */
+  pin?: "top" | "bottom";
   run: () => void;
 }
 
@@ -30,6 +32,8 @@ export interface FindTarget {
 
 export interface PaletteHooks {
   items(): PaletteItem[];
+  /** Entries made from what is typed (quick connect, and later toolbox commands such as a name lookup). */
+  dynamic?(query: string): PaletteItem[];
   /** The search target, or null when the active tab has nothing to search. */
   findTarget(): FindTarget | null;
 }
@@ -157,7 +161,11 @@ export function openPalette(hooks: PaletteHooks, mode: "commands" | "find" = "co
       const rec = recents().map((id) => all.find((i) => i.id === id)).filter((i): i is PaletteItem => !!i);
       const rest = all.filter((i) => !rec.includes(i));
       shown = [...rec.map((item) => ({ item, at: [] as number[], recent: true })), ...rest.map((item) => ({ item, at: [] as number[], recent: false }))];
-    } else shown = rank(all, q);
+    } else {
+      shown = rank(all, q);
+      const extra = (hooks.dynamic?.(q.trim()) ?? []).map((item) => ({ item, at: [] as number[] }));
+      shown = [...extra.filter((m) => m.item.pin === "top"), ...shown, ...extra.filter((m) => m.item.pin !== "top")];
+    }
     sel = Math.min(sel, Math.max(0, shown.length - 1));
     const rows: HTMLElement[] = [];
     let heading = "";

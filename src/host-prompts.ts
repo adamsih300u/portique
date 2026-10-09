@@ -1,5 +1,6 @@
 import type { Profile } from "./api";
 import { api } from "./api";
+import { isQuick } from "./quick-connect";
 import { h, modal, promptSecret } from "./ui";
 
 export interface HostKeyInfo {
@@ -28,7 +29,7 @@ export async function confirmHostKey(i: HostKeyInfo) {
 /** Asks for the login password (offering to save it) or key passphrase. Null if cancelled. */
 export async function askLoginSecret(p: Profile, passphrase: boolean): Promise<string | null> {
   const label = passphrase ? "Key passphrase" : `Password for ${p.username || "user"}@${p.host}`;
-  const r = await promptSecret(p.name, label, !passphrase);
+  const r = await promptSecret(p.name, label, !passphrase && !isQuick(p));
   if (!r) return null;
   if (r.save) await api.setPassword(p.id, r.value).catch(() => {});
   return r.value;

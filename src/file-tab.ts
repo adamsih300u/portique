@@ -404,6 +404,7 @@ export class FileTab {
   private lastSecrets: [string?, string?] = [];
   private state: FileState = "connecting";
   disposed = false;
+  private shown = false;
   onChange: () => void = () => {};
   /** The global default start folder for the local pane (Settings); a profile's own folder wins over it. */
   static defaultLocalDir = "";
@@ -467,8 +468,10 @@ export class FileTab {
   // ------------------------------------------------------------ Tab-like surface used by the app shell
 
   show(on: boolean) {
+    this.shown = on;
     this.el.style.display = on ? "" : "none";
     this.header.classList.toggle("active", on);
+    if (on) this.header.classList.remove("unread");
     this.header.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     if (on) (this.remote.path ? this.remote : this.local).focus();
   }
@@ -644,6 +647,7 @@ export class FileTab {
     Object.assign(t, { state, done, total, message });
     this.render(t);
     if (finishing && t.dest.path === t.destDir) void t.dest.refresh();
+    if (finishing && state !== "cancelled" && (!this.shown || !document.hasFocus())) this.header.classList.add("unread");
     this.updateSummary();
   }
 

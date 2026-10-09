@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 pub fn data_dir() -> Result<PathBuf> {
     resolve_dir(&dirs::config_dir().context("no config directory available")?)
@@ -207,7 +209,45 @@ pub fn save_profiles(p: &Vec<Profile>) -> Result<()> {
     write_json("profiles.json", p)
 }
 
+/// Prefix of the ids given to quick-connect profiles, which exist only in memory.
+pub const QUICK_PREFIX: &str = "quick:";
+
+fn quick_profiles() -> &'static Mutex<HashMap<String, Profile>> {
+    static QUICK: OnceLock<Mutex<HashMap<String, Profile>>> = OnceLock::new();
+    QUICK.get_or_init(Default::default)
+}
+
+/// Remembers a profile for the life of the app so a session can start from it by id. It is never written
+/// to `profiles.json`. Only a plain host: no jump host, forwards or API settings are carried over.
+pub fn add_quick(p: Profile) -> Result<Profile> {
+    if !matches!(p.protocol, Protocol::Ssh | Protocol::Telnet) {
+        anyhow::bail!("quick connect handles SSH and Telnet only");
+    }
+    let host = p.host.trim();
+    if host.is_empty() || host.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        anyhow::bail!("not a valid host name");
+    }
+    if p.port == 0 {
+        anyhow::bail!("not a valid port");
+    }
+    let q = Profile {
+        id: format!("{QUICK_PREFIX}{}", uuid::Uuid::new_v4()),
+        host: host.to_string(),
+        group: String::new(),
+        key_id: None,
+        jump_host: None,
+        forwards: Vec::new(),
+        api: serde_json::Value::Null,
+        ..p
+    };
+    quick_profiles().lock().unwrap().insert(q.id.clone(), q.clone());
+    Ok(q)
+}
+
 pub fn get_profile(id: &str) -> Result<Profile> {
+    if let Some(p) = quick_profiles().lock().unwrap().get(id) {
+        return Ok(p.clone());
+    }
     load_profiles()?
         .into_iter()
         .find(|p| p.id == id)
@@ -224,6 +264,26 @@ mod tests {
             cursor: "#ffffff".into(), selection: "#333333".into(), ansi: vec!["#123456".into(); 16],
             font_family: Some("'Irix Screen Mono 15', monospace".into()), font_size: Some(15.0),
         }
+    }
+
+    #[test]
+    fn quick_profiles_resolve_by_id_and_keep_to_a_plain_host() {
+        let q = add_quick(Profile {
+            name: "10.0.0.5".into(), host: " 10.0.0.5 ".into(), port: 22, protocol: Protocol::Ssh,
+            group: "g".into(), jump_host: Some("j".into()), key_id: Some("k".into()),
+            forwards: vec![Forward { kind: ForwardKind::Dynamic, listen_port: 1, dest_host: String::new(), dest_port: 0 }],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(q.id.starts_with(QUICK_PREFIX));
+        assert_eq!(q.host, "10.0.0.5");
+        assert!(q.jump_host.is_none() && q.key_id.is_none() && q.forwards.is_empty() && q.group.is_empty());
+        assert_eq!(get_profile(&q.id).unwrap().host, "10.0.0.5");
+
+        let api = Profile { protocol: Protocol::Api, host: "h".into(), port: 80, ..Default::default() };
+        assert!(add_quick(api).is_err());
+        assert!(add_quick(Profile { host: "a b".into(), port: 22, ..Default::default() }).is_err());
+        assert!(add_quick(Profile { host: "a".into(), port: 0, ..Default::default() }).is_err());
     }
 
     #[test]

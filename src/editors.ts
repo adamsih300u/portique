@@ -187,30 +187,31 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
   const apiSection = h("div", {}, apiForm.el);
 
   const netSection = h("div", { class: "grid" });
-  const sshSection = h("div", { class: "grid" });
   const serialSection = h("div", { class: "grid" });
   const credSection = h("div", { class: "grid" });
   const plainWarn = h("p", { class: "muted warn" },
     "Telnet and serial are not encrypted, and the saved password is typed automatically at the first password prompt after connecting (within 60 s). Only use this on trusted networks and devices.");
 
-  netSection.append(field("Host", host), field("Port", port));
-  sshSection.append(
-    field("Authentication", authSel),
-    field("Private key", h("div", { class: "row" }, keySel, manageKeys)),
-    h("label", { class: "check" }, autoReconnect, " Reconnect automatically if the connection drops"),
-    field("Jump host", jumpSel, "Connects through another SSH profile (like ProxyJump), using its saved login."),
-    field("Host key", forgetHost, "Host keys are pinned on first connect; clear it after a legitimate key change."),
-  );
+  // Connection: where to go. Login: who you are and how you prove it. Everything else is optional and folded away.
+  const jumpField = field("Jump host", jumpSel, "Connects through another SSH profile (like ProxyJump), using its saved login.");
+  const authField = field("Authentication", authSel);
+  const keyField = field("Private key", h("div", { class: "row" }, keySel, manageKeys));
+  const passField = field("Password", pass, "Kept in the encrypted vault, never in the profile file.");
+  const clearField = h("label", { class: "check" }, clearPass, " Remove saved password");
+  netSection.append(field("Host", host), field("Port", port), jumpField);
   serialSection.append(
     field("Port", serialPort), field("Baud", baud), field("Data bits", dataBits),
     field("Parity", parity), field("Stop bits", stopBits), field("Flow control", flow), portList, bauds,
   );
-  credSection.append(
-    plainWarn,
-    field("Username", user),
-    field("Password", pass, "Kept in the encrypted vault, never in the profile file."),
-    h("label", { class: "check" }, clearPass, " Remove saved password"),
-  );
+  credSection.append(plainWarn, field("Username", user), authField, passField, keyField, clearField);
+
+  const sessionSection = h("details", { class: "fwd-section" },
+    h("summary", {}, "Reliability & security"),
+    h("label", { class: "check" }, autoReconnect, " Reconnect automatically if the connection drops"),
+    field("Host key", forgetHost, "Host keys are pinned on first connect; clear it after a legitimate key change."));
+  const groupSection = h("details", { class: "fwd-section", open: !!p.group },
+    h("summary", {}, "Sidebar group"),
+    field("Group", group, "Profiles with the same group are listed together in the sidebar."));
 
   const loginBlock = h("div", {}, h("h3", {}, "Login"), credSection);
   const appearanceBlock = h("div", {},
@@ -228,15 +229,17 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
     apiSection.hidden = pr !== "api";
     loginBlock.hidden = pr === "api";
     appearanceBlock.hidden = pr === "api";
-    sshSection.hidden = pr !== "ssh";
+    jumpField.hidden = pr !== "ssh";
+    authField.hidden = pr !== "ssh";
+    sessionSection.hidden = pr !== "ssh";
     fwdSection.hidden = pr !== "ssh";
     filesSection.hidden = pr !== "ssh";
     serialSection.hidden = pr !== "serial";
-    keySel.closest("label")!.hidden = pr !== "ssh" || authSel.value === "password";
+    keyField.hidden = pr !== "ssh" || authSel.value === "password";
     // Password applies to everything except pure key auth.
     const needsPw = pr !== "ssh" || authSel.value !== "key";
-    pass.closest("label")!.hidden = !needsPw;
-    clearPass.closest("label")!.hidden = !needsPw;
+    passField.hidden = !needsPw;
+    clearField.hidden = !needsPw;
     if (!p.id || Number(port.value) === DEFAULT_PORT[p.protocol]) port.value = String(DEFAULT_PORT[pr] || "");
     plainWarn.hidden = pr === "ssh" || pr === "api";
     p.protocol = pr;
@@ -248,10 +251,11 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
   const body = h(
     "div",
     { class: "editor" },
-    h("div", { class: "grid" }, field("Name", name), field("Group", group), field("Protocol", proto)),
+    h("div", { class: "grid" }, field("Name", name), field("Protocol", proto)),
     h("datalist", { id: "groups" }, ...[...new Set(allProfiles.map((x) => x.group).filter(Boolean))].map((g) => h("option", { value: g }))),
-    h("h3", {}, "Connection"), netSection, serialSection, sshSection, fwdSection, filesSection, apiSection,
+    h("h3", {}, "Connection"), netSection, serialSection, apiSection,
     loginBlock,
+    h("h3", {}, "Options"), fwdSection, filesSection, sessionSection, groupSection,
     appearanceBlock,
   );
 
