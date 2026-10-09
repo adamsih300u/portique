@@ -41,5 +41,6 @@ Style, so a record reads in under a minute:
 | [0007](0007-maintainer-approves-merges.md) | The maintainer approves every merge into `main` and `dev` | accepted |
 | [0008](0008-short-readme.md) | The README stays short and links to `docs/` | accepted |
 | [0009](0009-italic-is-the-apps-voice.md) | Italic is for the app's voice only | accepted |
+| [0010](0010-local-shells-start-by-id.md) | A local terminal starts from a detected shell, by id | accepted |
 
 The same decisions are summarised for agents under *Standing decisions* in [AGENTS.md](../../AGENTS.md).

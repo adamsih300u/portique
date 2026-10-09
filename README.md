@@ -4,7 +4,7 @@
 
 Portique is a desktop app for the machines and services you look after. Everything opens as a tab in one window:
 
-- **Terminals** for SSH, Telnet and serial ports, with splits, saved workspaces and a command palette.
+- **Terminals** for SSH, Telnet, serial ports and (if you turn them on) the shells on your own computer, with splits, saved workspaces and a command palette.
 - **A file browser** for any SSH host: your computer on one side, the server on the other, drag to copy.
 - **An API client**: point it at an endpoint, save the requests you use, check the responses, and keep tokens out of sight.
 

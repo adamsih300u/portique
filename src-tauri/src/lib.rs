@@ -1,5 +1,6 @@
 mod http;
 mod keys;
+mod local;
 mod serial;
 mod sftp;
 mod session;
@@ -37,6 +38,9 @@ fn save_profile(mut profile: Profile) -> Res<Profile> {
     let mut all = store::load_profiles().map_err(err)?;
     if profile.id.is_empty() {
         profile.id = uuid::Uuid::new_v4().to_string();
+    }
+    if profile.protocol == store::Protocol::Local || profile.id.starts_with(local::PREFIX) {
+        return Err("local terminals are not saved as profiles".into());
     }
     if profile.protocol != store::Protocol::Ssh {
         profile.jump_host = None;
@@ -338,6 +342,53 @@ fn set_prefs(restore_tabs: bool, sftp_local_dir: String, ui_scale: String, vault
     window::save(&s).map_err(err)
 }
 
+/// The shells found on this computer, for the settings pane. Looks again each time.
+#[tauri::command]
+async fn list_local_shells() -> Res<Vec<local::Shell>> {
+    tauri::async_runtime::spawn_blocking(local::detect).await.map_err(|e| e.to_string())
+}
+
+/// The local terminals the settings turn on, as profiles to list and open (empty when they are off).
+#[tauri::command]
+async fn list_local_terminals() -> Res<Vec<Profile>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let s = window::load();
+        if !s.local_terminals {
+            return Vec::new();
+        }
+        let shells = local::detect();
+        s.local_shells.iter().filter_map(|id| shells.iter().find(|x| &x.id == id)).map(|x| local::profile_of(x, &s)).collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Turns local terminals on or off and chooses which shells to offer. Unknown shells are dropped.
+#[tauri::command]
+async fn set_local_terminals(enabled: bool, shells: Vec<String>) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = local::detect();
+        let mut s = window::load();
+        s.local_terminals = enabled;
+        s.local_shells = known.iter().filter(|k| shells.contains(&k.id)).map(|k| k.id.clone()).collect();
+        window::save(&s).map_err(err)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Remembers how one local shell looks. `id` is the profile id (`local:<shell id>`).
+#[tauri::command]
+fn set_local_look(id: String, look: store::Appearance) -> Res<()> {
+    if !look.valid() {
+        return Err("that look has a value out of range".into());
+    }
+    let mut s = window::load();
+    let shell = id.strip_prefix(local::PREFIX).filter(|x| s.local_shells.iter().any(|y| y == x)).ok_or("that local terminal is not turned on")?.to_string();
+    s.local_look.insert(shell, look);
+    window::save(&s).map_err(err)
+}
+
 #[tauri::command]
 fn set_ui(ui: window::UiColours) -> Res<()> {
     if !ui.valid() {
@@ -555,6 +606,10 @@ pub fn run() {
             save_profile,
             delete_profile,
             get_settings,
+            list_local_shells,
+            set_local_look,
+            list_local_terminals,
+            set_local_terminals,
             set_ui,
             set_prefs,
             set_quake_key,

@@ -6,7 +6,7 @@ import { applyChrome, chromeDialog, DEFAULT_UI, PRESET_NAMES, presetUi } from ".
 import { FileTab } from "./file-tab";
 import { ApiTab } from "./api-tab";
 import { httpStore } from "./http-store";
-import { editProfile, manageKeysDialog, themeDialog } from "./editors";
+import { editProfile, localLookDialog, manageKeysDialog, themeDialog } from "./editors";
 import { protoIcon } from "./proto-icon";
 import { contextMenu, type MenuEntries, menuOn } from "./menu";
 import { type Arrow, type Dir, type Layout, Tab } from "./panes";
@@ -37,8 +37,10 @@ interface Workspaces {
 
 type AnyTab = Tab | FileTab | ApiTab;
 
-let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15 };
+let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15, localTerminals: false, localShells: [] };
 let profiles: Profile[] = [];
+/** Shells on this computer that the settings turn on. They exist only in memory and are never saved, so they stay apart from `profiles`. */
+let localTerms: Profile[] = [];
 let ws: Workspaces = { last: { tabs: [], active: 0 }, named: [] };
 const tabs: AnyTab[] = [];
 let active: AnyTab | null = null;
@@ -94,8 +96,11 @@ document.querySelector("#app")!.append(
 );
 
 const sideLayout = initSidebar(document.querySelector<HTMLElement>("#app")!, document.querySelector("aside")!, sidebar, () => ({
-  groups: [...new Set(profiles.map((p) => p.group || "Ungrouped")), ...(ws.named.length ? ["Workspaces"] : [])],
-  rows: [...profiles.map((p) => ({ name: p.name, icon: p.protocol })), ...ws.named.map((w) => ({ name: w.name, icon: "workspace" as const }))],
+  groups: [...(localTerms.length ? ["Local"] : []), ...new Set(profiles.map((p) => p.group || "Ungrouped")), ...(ws.named.length ? ["Workspaces"] : [])],
+  rows: [
+    ...[...localTerms, ...profiles].map((p) => ({ name: p.name, icon: p.protocol })),
+    ...ws.named.map((w) => ({ name: w.name, icon: "workspace" as const })),
+  ],
 }));
 
 // ---------------------------------------------------------------- sidebar
@@ -114,6 +119,7 @@ function renderProfiles() {
     groups.set(g, [...(groups.get(g) ?? []), p]);
   }
   const named = ws.named.filter((w) => w.name.toLowerCase().includes(q));
+  const local = localTerms.filter((p) => `${p.name} local terminal shell`.toLowerCase().includes(q));
   const searching = q !== "";
   const section = (key: string, label: string, rows: HTMLElement[], drop?: string) => {
     const shut = !searching && collapsed.has(key);
@@ -124,6 +130,7 @@ function renderProfiles() {
     return sec;
   };
   sidebar.replaceChildren(
+    ...(local.length ? [section("l", "Local", local.map(profileRow))] : []),
     ...[...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([g, list]) =>
       section(`p:${g}`, g, list.sort((a, b) => a.name.localeCompare(b.name)).map(profileRow), g === "Ungrouped" ? "" : g)),
     ...(named.length ? [section("w", "Workspaces", named.map(workspaceRow))] : []),
@@ -173,7 +180,7 @@ async function moveToGroup(p: Profile, group: string) {
 }
 
 function profileRow(p: Profile) {
-  const row = h("div", { class: "profile", title: describe(p), draggable: true, ondblclick: () => openTab(p),
+  const row = h("div", { class: "profile", title: describe(p), draggable: p.protocol !== "local", ondblclick: () => openTab(p),
     ondragstart: (e: DragEvent) => {
       e.dataTransfer!.setData(DRAG_TYPE, p.id);
       e.dataTransfer!.effectAllowed = "move";
@@ -205,6 +212,17 @@ function workspaceRow(w: Workspace) {
 }
 
 function profileMenu(p: Profile): MenuEntries {
+  if (p.protocol === "local") {
+    return [
+      { label: "Open", action: () => openTab(p) },
+      ...(active ? [
+        { label: "Open in split right", action: () => splitActive("row", p) },
+        { label: "Open in split below", action: () => splitActive("col", p) },
+      ] : []),
+      null,
+      { label: "Appearance…", action: () => void localAppearance(p) },
+    ];
+  }
   if (p.protocol === "api") {
     return [
       { label: "Open", action: () => openTab(p) },
@@ -232,7 +250,8 @@ function profileMenu(p: Profile): MenuEntries {
 }
 
 const describe = (p: Profile) =>
-  p.protocol === "serial" ? `${p.serial.port} @ ${p.serial.baud}`
+  p.protocol === "local" ? "Terminal on this computer"
+    : p.protocol === "serial" ? `${p.serial.port} @ ${p.serial.baud}`
     : p.protocol === "api" ? p.api.baseUrl || "API connection (no base address)"
     : `${p.username ? p.username + "@" : ""}${p.host}:${p.port}`;
 
@@ -282,7 +301,7 @@ async function remove(p: Profile) {
 
 // ---------------------------------------------------------------- tabs and panes
 
-const findProfile = (id: string) => profiles.find((p) => p.id === id);
+const findProfile = (id: string) => profiles.find((p) => p.id === id) ?? localTerms.find((p) => p.id === id);
 
 function addTab(layout: Layout): Tab | null {
   let tab: Tab | null = null;
@@ -496,7 +515,27 @@ function applySettings(s: Settings) {
 
 async function openSettings() {
   const s = await settingsDialog(settings);
-  if (s) applySettings(s);
+  if (!s) return;
+  applySettings(s);
+  await loadLocal();
+  renderProfiles();
+}
+
+/** Asks which shells on this computer the settings turn on. A failure just means none are offered. */
+async function loadLocal() {
+  localTerms = await api.listLocalTerminals().catch(() => []);
+}
+
+/** Opens the look dialog for a local shell; it is saved by the dialog and shown at once in every tab on that shell. */
+async function localAppearance(p: Profile) {
+  const look = await localLookDialog(p);
+  if (look) adoptLocalLook(p, look);
+}
+
+function adoptLocalLook(p: Profile, look: Profile["appearance"]) {
+  const updated = { ...p, appearance: look };
+  localTerms = localTerms.map((x) => (x.id === p.id ? updated : x));
+  for (const t of tabs) t.applyProfile(updated);
 }
 
 // ---------------------------------------------------------------- command palette
@@ -529,8 +568,8 @@ function paletteItems(): PaletteItem[] {
   for (const t of tabs) if (t !== active) add("Tabs", `tab:${t.title}:${tabs.indexOf(t)}`, `Switch to ${t.title}`, () => activate(t), { subtitle: t instanceof FileTab ? "file browser" : t instanceof ApiTab ? "API" : "" });
 
   // Hosts: all connections first, then all file browsers.
-  const hosts = [...profiles].sort((a, b) => a.name.localeCompare(b.name));
-  for (const p of hosts) add("Connect", `connect:${p.id}`, p.name, () => openTab(p), { subtitle: describe(p), keywords: p.group });
+  const hosts = [...localTerms, ...profiles].sort((a, b) => a.name.localeCompare(b.name));
+  for (const p of hosts) add("Connect", `connect:${p.id}`, p.name, () => openTab(p), { subtitle: describe(p), keywords: p.protocol === "local" ? "local shell terminal this computer" : p.group });
   for (const p of hosts.filter((x) => x.protocol === "ssh"))
     add("Files", `files:${p.id}`, `Browse files on ${p.name}`, () => openFiles(p), { subtitle: describe(p), keywords: `sftp upload download ${p.group}` });
   for (const w of ws.named) add("Workspaces", `ws:${w.id}`, `Open workspace ${w.name}`, () => openWorkspace(w), { subtitle: `${w.tabs.length} tab${w.tabs.length === 1 ? "" : "s"}` });
@@ -552,6 +591,10 @@ function paletteItems(): PaletteItem[] {
     if (p) add("API", `request:${request.id}`, `${p.name}: ${request.name}`, () => { openApi(p); apiTabFor(p)?.select(request.id); }, { subtitle: `${request.method} ${request.url}`, keywords: `${request.group} api http` });
   }
 
+  if (tab && tab.focused.profile.protocol === "local") {
+    const p = localTerms.find((x) => x.id === tab.focused.profile.id);
+    if (p) add("This tab", "local-look", `Appearance of ${p.name}…`, () => void localAppearance(p), { keywords: "theme font colours cursor local terminal" });
+  }
   if (tab && isQuick(tab.focused.profile)) {
     const p = tab.focused.profile;
     add("This tab", "save-quick", `Save ${p.name} as a profile…`, () => void saveQuick(p), { keywords: "quick connect keep" });
@@ -753,8 +796,13 @@ let zoomTimer: number | undefined;
 TerminalTab.onFontSize = (p, size) => {
   clearTimeout(zoomTimer);
   zoomTimer = window.setTimeout(async () => {
-    const cur = profiles.find((x) => x.id === p.id);
+    const cur = profiles.find((x) => x.id === p.id) ?? localTerms.find((x) => x.id === p.id);
     if (!cur || cur.appearance.fontSize === size) return;
+    if (cur.protocol === "local") {
+      const look = { ...cur.appearance, fontSize: size };
+      if (await api.setLocalLook(cur.id, look).then(() => true, () => false)) adoptLocalLook(cur, look);
+      return;
+    }
     const saved = await api.saveProfile({ ...cur, appearance: { ...cur.appearance, fontSize: size } }).catch(() => null);
     if (!saved) return;
     profiles = profiles.map((x) => (x.id === saved.id ? saved : x));
@@ -787,6 +835,7 @@ void ensureUnlocked().then(async () => {
   if (await httpStore.load()) await refresh(); // requests saved before connections existed were moved into a connection of their own
   await loadWorkspaces();
   await settingsLoaded; // whether to reopen the last tabs is a setting
+  await loadLocal(); // and tabs on local shells can only reopen once those are known
   if (settings.restoreTabs) restoreLast();
   ready = true;
   renderProfiles();

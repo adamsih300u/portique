@@ -53,6 +53,8 @@ pub enum Protocol {
     Serial,
     /// An HTTP API endpoint: opens the API client, not a terminal. Its settings are in `Profile::api`.
     Api,
+    /// A shell on this computer (`local.rs`). Never saved: its profiles exist only in memory.
+    Local,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -131,6 +133,19 @@ impl Default for Appearance {
             scrollback: 10_000,
             ligatures: false,
         }
+    }
+}
+
+impl Appearance {
+    /// The look ends up in CSS and the terminal's options on the frontend, so keep every field in a sane range.
+    pub fn valid(&self) -> bool {
+        let font_ok = self.font_family.len() <= 200 && !self.font_family.chars().any(|c| c.is_control() || "<>{};\\@".contains(c));
+        font_ok
+            && (6.0..=48.0).contains(&self.font_size)
+            && ["block", "underline", "bar"].contains(&self.cursor_style.as_str())
+            && self.scrollback <= 1_000_000
+            && !self.theme_id.is_empty()
+            && self.theme_id.len() <= 100
     }
 }
 
@@ -249,6 +264,9 @@ pub fn add_quick(p: Profile) -> Result<Profile> {
 }
 
 pub fn get_profile(id: &str) -> Result<Profile> {
+    if id.starts_with(crate::local::PREFIX) {
+        return crate::local::profile_for(id, &crate::window::load()).context("that local terminal is not turned on in the settings");
+    }
     if let Some(p) = quick_profiles().lock().unwrap().get(id) {
         return Ok(p.clone());
     }
