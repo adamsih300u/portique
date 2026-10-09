@@ -30,11 +30,26 @@ function luminance(hex: string) {
 const isLight = (hex: string) => luminance(hex) > 0.35;
 const mix = (a: string, b: string, pct: number) => `color-mix(in srgb, ${a}, ${b} ${pct}%)`;
 
+/**
+ * Colours that carry meaning (success, failure, method names, JSON syntax). The pale ones that read well on a dark
+ * background wash out on a light one, so each region gets the set that suits its own background.
+ */
+const SEMANTIC = {
+  dark: {
+    "--ok": "#6fb98f", "--warn": "#d29922", "--danger": "#e5767a", "--info": "#6e9fd8", "--violet": "#a58bd6",
+    "--j-str": "#8fc4a3", "--j-num": "#7fa8dc", "--j-lit": "#c39bd3",
+  },
+  light: {
+    "--ok": "#236a40", "--warn": "#7c5000", "--danger": "#a82f38", "--info": "#285a98", "--violet": "#65459f",
+    "--j-str": "#236a40", "--j-num": "#285a98", "--j-lit": "#74409a",
+  },
+};
+
 /** Re-colours one region (and everything inside it) by overriding the variables its children read. */
 function paintRegion(el: Element | null, bg: string, content = false) {
   const s = (el as HTMLElement | null)?.style;
   if (!s) return;
-  const props = ["--bg", "--panel", "--panel2", "--line", "--text", "--muted", "--door", "--door-ink", "color-scheme"];
+  const props = ["--bg", "--panel", "--panel2", "--line", "--text", "--muted", "--door", "--door-ink", ...Object.keys(SEMANTIC.dark), "color-scheme"];
   if (!bg) return props.forEach((p) => s.removeProperty(p));
   const light = isLight(bg);
   const text = light ? "#23252d" : "#e4e1d6";
@@ -48,12 +63,15 @@ function paintRegion(el: Element | null, bg: string, content = false) {
   // The emblem's doorway: dark ink on a light region, a deeper shade of the region on a dark one.
   s.setProperty("--door", light ? text : mix(bg, "#000000", 55));
   s.setProperty("--door-ink", light ? bg : text);
+  for (const [k, v] of Object.entries(light ? SEMANTIC.light : SEMANTIC.dark)) s.setProperty(k, v);
   s.setProperty("color-scheme", light ? "light" : "dark");
 }
 
 /** Applies interface colours to the live document. */
 export function applyChrome(ui: UiColours) {
   document.documentElement.classList.toggle("plain-tabs", ui.plainTabs);
+  // The document itself takes the content look, so dialogs, menus and the palette (which sit outside the regions below) match it too.
+  paintRegion(document.documentElement, ui.content, true);
   paintRegion(document.querySelector("aside"), ui.side);
   paintRegion(document.querySelector("main"), ui.content, true);
   paintRegion(document.querySelector(".tabbar"), ui.top);
