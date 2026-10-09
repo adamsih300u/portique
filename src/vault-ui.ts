@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, type PasswordStrength } from "./api";
 import { field, h, modal } from "./ui";
 
 let pending: Promise<void> | null = null;
@@ -27,6 +27,30 @@ function enterSubmits(...inputs: HTMLInputElement[]) {
     });
 }
 
+const STRENGTH_LABELS = ["Very weak", "Weak", "Fair", "Good", "Strong"];
+
+/** A thin bar and one line of advice under a new-password field; it follows the field as you type. */
+function strengthMeter(input: HTMLInputElement) {
+  const bar = h("div", { class: "pw-meter-bar" });
+  const text = h("small", { class: "pw-meter-text" });
+  let timer: number | undefined;
+  let seq = 0;
+  const show = (s: PasswordStrength | null) => {
+    bar.dataset.score = s ? String(s.score) : "";
+    text.textContent = s ? `${STRENGTH_LABELS[s.score]}${s.advice ? ` - ${s.advice}` : ""}` : "";
+  };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    if (!input.value) return show(null);
+    const mine = ++seq;
+    timer = window.setTimeout(async () => {
+      const s = await api.vaultPasswordStrength(input.value).catch(() => null);
+      if (mine === seq) show(s);
+    }, 150);
+  });
+  return h("div", { class: "pw-meter" }, bar, text);
+}
+
 async function unlockDialog() {
   const pw = h("input", { type: "password", autocomplete: "off" });
   enterSubmits(pw);
@@ -49,6 +73,7 @@ async function createDialog(minLen: number) {
   const body = h("div", {},
     h("p", {}, "Portique keeps saved passwords, key passphrases, and imported private keys in one encrypted vault file. Choose a master password to protect it."),
     field(`Master password (at least ${minLen} characters)`, pw),
+    strengthMeter(pw),
     field("Confirm master password", pw2),
     h("p", { class: "muted" }, "There is no recovery: if you forget this password, the vault contents cannot be decrypted. A long passphrase of several words is best."));
   await modal("Create vault", body, [
@@ -70,7 +95,7 @@ export async function changePasswordDialog() {
   const old = h("input", { type: "password", autocomplete: "current-password" });
   const nw = h("input", { type: "password", autocomplete: "new-password" });
   const nw2 = h("input", { type: "password", autocomplete: "new-password" });
-  const body = h("div", {}, field("Current master password", old), field(`New master password (at least ${s.minPasswordLen} characters)`, nw), field("Confirm new password", nw2));
+  const body = h("div", {}, field("Current master password", old), field(`New master password (at least ${s.minPasswordLen} characters)`, nw), strengthMeter(nw), field("Confirm new password", nw2));
   await modal("Change master password", body, [
     { label: "Cancel" },
     {

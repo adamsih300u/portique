@@ -190,6 +190,14 @@ export interface UiColours {
   plainTabs: boolean;
 }
 
+export interface PasswordStrength {
+  /** 0 (guessable at once) to 4 (very unlikely to be guessed). */
+  score: number;
+  /** True when the vault would accept it. */
+  ok: boolean;
+  advice: string;
+}
+
 export interface VaultStatus {
   exists: boolean;
   unlocked: boolean;
@@ -259,6 +267,7 @@ export const api = {
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
   vaultCreate: (password: string) => invoke<void>("vault_create", { password }),
   vaultUnlock: (password: string) => invoke<void>("vault_unlock", { password }),
+  vaultPasswordStrength: (password: string) => invoke<PasswordStrength>("vault_password_strength", { password }),
   vaultLock: () => invoke<void>("vault_lock"),
   vaultTouch: () => invoke<void>("vault_touch"),
   vaultChangePassword: (old: string, nw: string) => invoke<void>("vault_change_password", { old, new: nw }),

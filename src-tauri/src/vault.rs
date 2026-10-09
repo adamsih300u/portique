@@ -25,10 +25,51 @@ use std::{
 use zeroize::{Zeroize, Zeroizing};
 
 pub const MIN_PASSWORD_LEN: usize = 12;
+/// Lowest zxcvbn score (0-4) a master password may have. 4 means at least 10^10 guesses.
+pub const MIN_SCORE: u8 = 4;
 const VERSION: u32 = 1;
 
 /// Error text the frontend matches on to trigger its unlock prompt.
 pub const LOCKED_MSG: &str = "vault is locked";
+
+/// How hard a candidate master password is to guess, with zxcvbn's advice on improving it.
+#[derive(Serialize)]
+pub struct Strength {
+    pub score: u8,
+    pub ok: bool,
+    pub advice: String,
+}
+
+/// Rates `password`. Only the first 128 characters are scored, which keeps the estimator fast on pasted text.
+pub fn assess(password: &str) -> Strength {
+    let head: String = password.chars().take(128).collect();
+    let est = zxcvbn::zxcvbn(&head, &["portique", "termix", "vault"]);
+    let score = u8::from(est.score());
+    let advice = est
+        .feedback()
+        .map(|f| {
+            let mut parts = Vec::new();
+            if let Some(w) = f.warning() {
+                parts.push(w.to_string());
+            }
+            parts.extend(f.suggestions().iter().map(|s| s.to_string()));
+            parts.join(" ")
+        })
+        .unwrap_or_default();
+    let ok = password.chars().count() >= MIN_PASSWORD_LEN && score >= MIN_SCORE;
+    Strength { score, ok, advice }
+}
+
+fn require_strong(password: &str) -> Result<()> {
+    if password.chars().count() < MIN_PASSWORD_LEN {
+        bail!("master password must be at least {MIN_PASSWORD_LEN} characters");
+    }
+    let s = assess(password);
+    if s.score < MIN_SCORE {
+        bail!("master password is too easy to guess. {}", if s.advice.is_empty() { "Try several unrelated words." } else { &s.advice });
+    }
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub struct Kdf {
@@ -116,9 +157,7 @@ impl Vault {
         if self.exists() {
             bail!("a vault already exists");
         }
-        if password.chars().count() < MIN_PASSWORD_LEN {
-            bail!("master password must be at least {MIN_PASSWORD_LEN} characters");
-        }
+        require_strong(password)?;
         let mut salt = vec![0u8; 16];
         getrandom::fill(&mut salt).map_err(|e| anyhow!("no randomness available: {e}"))?;
         let key = derive(password, &salt, &kdf)?;
@@ -159,9 +198,7 @@ impl Vault {
     }
 
     pub fn change_password(&mut self, old: &str, new: &str) -> Result<()> {
-        if new.chars().count() < MIN_PASSWORD_LEN {
-            bail!("master password must be at least {MIN_PASSWORD_LEN} characters");
-        }
+        require_strong(new)?;
         let kdf = self.unlocked()?.kdf;
         // Re-verify the old password against the file rather than trusting the unlocked session.
         let mut probe = Vault::new(self.path.clone());
@@ -279,7 +316,8 @@ mod tests {
     use super::*;
 
     const FAST: Kdf = Kdf { m: 64, t: 1, p: 1 };
-    const PW: &str = "correct horse battery";
+    const PW: &str = "pylon-quartz-marmot-velvet-9";
+    const PW2: &str = "tundra gimlet orbit saffron 41";
 
     fn vault() -> (tempfile::TempDir, Vault) {
         let d = tempfile::tempdir().unwrap();
@@ -314,8 +352,31 @@ mod tests {
         assert!(v.create("short", FAST).is_err());
         v.create(PW, FAST).unwrap();
         v.lock();
-        assert!(v.unlock("incorrect horse battery").is_err());
+        assert!(v.unlock("pylon-quartz-marmot-velvet-8").is_err());
         assert!(!v.is_unlocked());
+    }
+
+    #[test]
+    fn weak_passwords_are_refused_with_advice() {
+        let (_d, mut v) = vault();
+        for weak in ["passwordpassword", "123456789012", "qwertyuiopasdf", "portiquevault123"] {
+            let e = v.create(weak, FAST).unwrap_err().to_string();
+            assert!(e.contains("too easy to guess"), "{weak}: {e}");
+            assert!(!v.exists());
+        }
+        assert!(assess(PW).ok && assess(PW2).ok);
+        assert!(!assess("short").ok);
+        assert!(!assess("passwordpassword").ok);
+        v.create(PW, FAST).unwrap();
+        let e = v.change_password(PW, "passwordpassword").unwrap_err().to_string();
+        assert!(e.contains("too easy to guess"));
+    }
+
+    #[test]
+    fn very_long_input_is_scored_quickly() {
+        let t = Instant::now();
+        let _ = assess(&"a1b2c3 ".repeat(5000));
+        assert!(t.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
@@ -348,11 +409,11 @@ mod tests {
         let (d, mut v) = vault();
         v.create(PW, FAST).unwrap();
         v.set("a", "b").unwrap();
-        assert!(v.change_password("wrong wrong wrong", "another long password").is_err());
-        v.change_password(PW, "another long password").unwrap();
+        assert!(v.change_password("wrong wrong wrong", PW2).is_err());
+        v.change_password(PW, PW2).unwrap();
         let mut v2 = Vault::new(d.path().join("vault.bin"));
         assert!(v2.unlock(PW).is_err());
-        v2.unlock("another long password").unwrap();
+        v2.unlock(PW2).unwrap();
         assert_eq!(v2.get("a").unwrap().as_deref(), Some("b"));
     }
 

@@ -544,7 +544,7 @@ mod tests {
         use crate::store::{AuthMethod, Profile};
         use tauri::ipc::{Channel, InvokeResponseBody};
         let env = |k: &str| std::env::var(k).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let key = crate::keys::import("test", &std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap(), None).unwrap();
         let p = Profile {
             host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),

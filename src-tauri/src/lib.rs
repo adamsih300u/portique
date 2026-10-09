@@ -202,6 +202,12 @@ fn vault_status() -> VaultStatus {
     VaultStatus { exists: v.exists(), unlocked: v.is_unlocked(), min_password_len: vault::MIN_PASSWORD_LEN }
 }
 
+/// Live strength rating for the password dialogs. The backend re-checks on create and change.
+#[tauri::command]
+fn vault_password_strength(password: String) -> vault::Strength {
+    vault::assess(&password)
+}
+
 /// Argon2 is deliberately slow and memory-hungry, so run it off the UI thread.
 #[tauri::command]
 async fn vault_create(password: String) -> Res<()> {
@@ -651,6 +657,7 @@ pub fn run() {
             vault_lock,
             vault_touch,
             vault_change_password,
+            vault_password_strength,
             list_profiles,
             save_profile,
             delete_profile,

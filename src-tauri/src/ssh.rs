@@ -493,7 +493,7 @@ mod tests {
         let env = |k: &str| std::env::var(k).unwrap();
         let (port, jump_port): (u16, u16) = (env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), env("PORTIQUE_TEST_JUMP_PORT").parse().unwrap());
         let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let key = keys::import("test", &pem, None).unwrap();
 
         // A TCP echo server standing in for "the service behind the server".
@@ -581,7 +581,7 @@ mod tests {
     async fn dropped_connection_is_reported_as_lost() {
         let env = |k: &str| std::env::var(k).unwrap();
         let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let key = keys::import("test", &pem, None).unwrap();
         let p = Profile {
             host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
@@ -619,7 +619,7 @@ mod tests {
         let port: u16 = std::env::var("PORTIQUE_TEST_SSH_PORT").unwrap().parse().unwrap();
         let user = std::env::var("PORTIQUE_TEST_SSH_USER").unwrap();
         let pem = std::fs::read_to_string(std::env::var("PORTIQUE_TEST_SSH_KEY").unwrap()).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let info = keys::import("test", &pem, None).unwrap();
 
         let out = Arc::new(StdMutex::new(Vec::<u8>::new()));
