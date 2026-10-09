@@ -18,7 +18,8 @@
   color-scheme: dark; font: calc(13px * var(--s))/1.4 system-ui, "Segoe UI", sans-serif;
 }
 * { box-sizing: border-box; }
-html, body, #app { height: 100%; margin: 0; background: var(--bg); color: var(--text); }
+html, body { height: 100%; } #app { height: calc(100% - var(--inset-bottom, 0px)); }
+html, body, #app { margin: 0; background: var(--bg); color: var(--text); }
 #app { display: grid; grid-template-columns: calc(250px * var(--s)) 1fr; }
 button, select, input, textarea { font: inherit; color: inherit; background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 5px 9px; }
 button { cursor: pointer; } button:hover { border-color: var(--accent); }
