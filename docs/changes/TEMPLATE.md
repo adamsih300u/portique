@@ -31,7 +31,7 @@ Gaps, known rough edges, and what should be a separate branch.
 
 ## Decisions
 
-One block per real choice. Skip trivial ones. If a decision will keep constraining later work, also add it to *Standing decisions* in `AGENTS.md`.
+One block per real choice. Skip trivial ones. If a decision will keep constraining later work, also write it as a numbered record in `docs/adr/` (copy `docs/adr/TEMPLATE.md`, add it to the index there) and add it to *Standing decisions* in `AGENTS.md`.
 
 ### D1. <The decision, as a short statement>
 

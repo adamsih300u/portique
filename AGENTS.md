@@ -51,7 +51,7 @@ Windows executable from Linux: see [CONTRIBUTING.md](CONTRIBUTING.md#a-windows-b
 1. **Work in a worktree** under `.claude/worktrees/` on a branch off `dev`, named `<type>/<slug>` (`feat`, `fix`, `docs`, `refactor`, `chore`). Reuse an existing build cache with `CARGO_TARGET_DIR` and a symlinked `node_modules` if you can.
 2. **Keep it small.** One branch is one PR is one change file. If it needs two sentences too many to describe, split it.
 3. **Write `docs/changes/<slug>.md`** from [docs/changes/TEMPLATE.md](docs/changes/TEMPLATE.md) as you go. It holds the long description and the decisions.
-4. **Record decisions ADR-style** in that file: context, decision, consequences, alternatives considered. If a decision will keep constraining later work, add a line to *Standing decisions* below.
+4. **Record decisions ADR-style** in that file: context, decision, consequences, alternatives considered. If a decision will keep constraining later work, also write it as a numbered record in [docs/adr/](docs/adr/README.md) (copy `docs/adr/TEMPLATE.md`) and add a line to *Standing decisions* below.
 5. **Commit with a Conventional Commit message** (`feat(api): …`, `fix(ui): …`). The body says why. Add whatever attribution trailer your environment asks for.
 6. **Open the PR into `dev`** with a Conventional Commit title and a short body from `.github/pull_request_template.md`: what, why, link to the change file. Don't paste the long description into the PR.
 7. **Finish by reporting**: what you did, where it lives (branch, path, PR), what you ran and its result, and anything you couldn't do.
@@ -60,14 +60,14 @@ Done means: type-check and backend tests pass, the change file exists and is hon
 
 ## Standing decisions
 
-Decisions that still bind new work. Each links to where it was made.
+Decisions that still bind new work. Each links to its record in [docs/adr/](docs/adr/README.md), where the context and alternatives are.
 
-- An API endpoint is a **profile** (`protocol: "api"`) whose tab holds its saved requests. There is no global request list. → [api-roadmap](docs/changes/api-roadmap.md)
-- API requests are sent **from Rust**, and secret variables are filled in there and never returned to the interface. → [api-roadmap](docs/changes/api-roadmap.md)
-- Sending through an SSH host uses a **local SOCKS5 proxy** over the existing forwarder, with names resolved on the server. → [api-roadmap](docs/changes/api-roadmap.md)
-- **Outside terminals the interface follows the interface look**, never a terminal theme; meaningful colours are the `--ok/--warn/--danger/--info` family. → [api-roadmap](docs/changes/api-roadmap.md)
-- **Pushes to `dev` publish `vX.Y.Z-dev.N` prereleases**; `dev` is merged into `main` with a **merge commit**, never squashed, so the next version can be predicted. → [dev-prereleases](docs/changes/dev-prereleases.md)
-- **Nothing merges into `main` or `dev` without the maintainer's approval.** Agents never merge, approve, or edit the protection rules. → [merge-approval](docs/changes/merge-approval.md)
-- **The README is short.** Detail goes in `docs/`; long PR descriptions go in `docs/changes/`. → [repo-guides](docs/changes/repo-guides.md)
+- An API endpoint is a **profile** (`protocol: "api"`) whose tab holds its saved requests. There is no global request list. → [ADR-0001](docs/adr/0001-api-endpoint-is-a-profile.md)
+- API requests are sent **from Rust**, and secret variables are filled in there and never returned to the interface. → [ADR-0002](docs/adr/0002-send-requests-from-rust.md), [ADR-0003](docs/adr/0003-secrets-never-read-back.md)
+- Sending through an SSH host uses a **local SOCKS5 proxy** over the existing forwarder, with names resolved on the server. → [ADR-0004](docs/adr/0004-ssh-socks5-proxy-for-requests.md)
+- **Outside terminals the interface follows the interface look**, never a terminal theme; meaningful colours are the `--ok/--warn/--danger/--info` family. → [ADR-0005](docs/adr/0005-interface-follows-the-look.md)
+- **Pushes to `dev` publish `vX.Y.Z-dev.N` prereleases**; `dev` is merged into `main` with a **merge commit**, never squashed, so the next version can be predicted. → [ADR-0006](docs/adr/0006-dev-merged-with-merge-commit.md), [dev-prereleases](docs/changes/dev-prereleases.md)
+- **Nothing merges into `main` or `dev` without the maintainer's approval.** Agents never merge, approve, or edit the protection rules. → [ADR-0007](docs/adr/0007-maintainer-approves-merges.md)
+- **The README is short.** Detail goes in `docs/`; long PR descriptions go in `docs/changes/`. → [ADR-0008](docs/adr/0008-short-readme.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.

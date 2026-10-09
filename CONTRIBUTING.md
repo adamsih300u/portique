@@ -87,7 +87,7 @@ One-time: `rustup target add x86_64-pc-windows-gnu`, and install `mingw-w64`, `n
 - **Short PRs.** A reviewer should be able to read the diff in one sitting. Move unrelated tidying to its own branch.
 - **The PR body is short**: what changed, why, and a link. The template in `.github/pull_request_template.md` has the shape.
 - **The long description goes in `docs/changes/<slug>.md`**, copied from `docs/changes/TEMPLATE.md`. It has the summary, how to review, what was tested, and the decisions.
-- **Decisions are written ADR-style** in that file: for each real choice, the context, what was decided, what it costs, and what else was considered. A decision that will keep constraining future work is also added to the standing decisions in `AGENTS.md`.
+- **Decisions are written ADR-style** in that file: for each real choice, the context, what was decided, what it costs, and what else was considered. A decision that will keep constraining future work also becomes a numbered record in [`docs/adr/`](docs/adr/README.md) and a line in the standing decisions in `AGENTS.md`.
 - **Commits and PR titles** follow Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, with `!` for breaking changes. Write the commit body to explain *why*.
 
 ### Dev builds and releases
