@@ -302,14 +302,18 @@ fn set_gpu(enabled: bool) -> Res<()> {
 
 /// General preferences from the settings pane (the hotkey, drop-down mode and GPU have their own commands).
 #[tauri::command]
-fn set_prefs(restore_tabs: bool, sftp_local_dir: String, ui_scale: String) -> Res<()> {
+fn set_prefs(restore_tabs: bool, sftp_local_dir: String, ui_scale: String, vault_idle_minutes: u32) -> Res<()> {
     if sftp_local_dir.len() > 4096 || sftp_local_dir.contains('\0') {
         return Err("that folder path is not valid".into());
     }
     if !["normal", "large"].contains(&ui_scale.as_str()) {
         return Err("unknown interface size".into());
     }
+    if !window::VAULT_IDLE_CHOICES.contains(&vault_idle_minutes) {
+        return Err("unknown vault lock time".into());
+    }
     let mut s = window::load();
+    s.vault_idle_minutes = vault_idle_minutes;
     s.restore_tabs = restore_tabs;
     s.sftp_local_dir = sftp_local_dir.trim().to_string();
     s.ui_scale = ui_scale;
@@ -511,7 +515,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    if vault::global().lock_if_idle(vault::IDLE_LOCK) {
+                    let minutes = window::load().vault_idle_minutes;
+                    if minutes == 0 {
+                        continue;
+                    }
+                    if vault::global().lock_if_idle(std::time::Duration::from_secs(u64::from(minutes) * 60)) {
                         let _ = tauri::Emitter::emit(&handle, "vault-locked", ());
                     }
                 }

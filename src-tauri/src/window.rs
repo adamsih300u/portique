@@ -30,7 +30,12 @@ pub struct Settings {
     pub sftp_local_dir: String,
     /// Size of the interface text: "normal" or "large".
     pub ui_scale: String,
+    /// Minutes without activity before the vault locks itself; 0 means never.
+    pub vault_idle_minutes: u32,
 }
+
+/// The idle times the settings pane offers (minutes; 0 = never).
+pub const VAULT_IDLE_CHOICES: [u32; 6] = [0, 1, 5, 15, 30, 60];
 
 /// Colours of the app chrome (not the terminal). Each is "#rrggbb" or empty for the default.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -55,7 +60,7 @@ impl UiColours {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { quake: false, quake_key: DEFAULT_KEY.into(), gpu: true, ui: UiColours::default(), restore_tabs: true, sftp_local_dir: String::new(), ui_scale: "normal".into() }
+        Self { quake: false, quake_key: DEFAULT_KEY.into(), gpu: true, ui: UiColours::default(), restore_tabs: true, sftp_local_dir: String::new(), ui_scale: "normal".into(), vault_idle_minutes: 15 }
     }
 }
 
@@ -149,6 +154,13 @@ pub fn open_link(app: &AppHandle, url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_saved_before_the_lock_time_existed_get_fifteen_minutes() {
+        let s: Settings = serde_json::from_str(r#"{"quake":true}"#).unwrap();
+        assert_eq!(s.vault_idle_minutes, 15);
+        assert!(VAULT_IDLE_CHOICES.contains(&s.vault_idle_minutes));
+    }
 
     #[test]
     fn default_hotkey_is_understood() {

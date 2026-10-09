@@ -26,7 +26,6 @@ use zeroize::{Zeroize, Zeroizing};
 
 pub const MIN_PASSWORD_LEN: usize = 12;
 const VERSION: u32 = 1;
-pub const IDLE_LOCK: Duration = Duration::from_secs(15 * 60);
 
 /// Error text the frontend matches on to trigger its unlock prompt.
 pub const LOCKED_MSG: &str = "vault is locked";
