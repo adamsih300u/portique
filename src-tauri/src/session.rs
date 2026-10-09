@@ -127,6 +127,7 @@ pub fn start(
             Protocol::Ssh => crate::ssh::run(&profile, params, em.clone(), rx).await,
             Protocol::Telnet => crate::telnet::run(&profile, params, em.clone(), rx, tx).await,
             Protocol::Serial => crate::serial::run(&profile, params, em.clone(), rx, tx).await,
+            Protocol::Api => Err(anyhow::anyhow!("an API connection has no terminal session; open it from the sidebar to send requests")),
         };
         match res {
             Ok(()) => em.status("closed", "Session closed"),

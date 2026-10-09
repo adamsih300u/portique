@@ -1,6 +1,6 @@
 /** Reading saved requests in from files: our own export, collection files (v2.x), OpenAPI/Swagger JSON, and curl commands. */
 
-import { ApiData, blankRequest, Environment, fromCurl, HttpRequest, looksLikeCurl, Method, METHODS, Pair, parseQuery, sanitizeRequest, withQuery } from "./http-model";
+import { blankRequest, ConnData, Environment, fromCurl, HttpRequest, looksLikeCurl, Method, METHODS, Pair, parseQuery, sanitizeRequest, withQuery } from "./http-model";
 
 export const EXPORT_FORMAT = "portique-requests";
 
@@ -23,7 +23,7 @@ const join = (...parts: string[]) => parts.map((p) => p.trim()).filter(Boolean).
 // ---------------------------------------------------------------- export
 
 /** Everything worth keeping, as a file. Secret values are never in it (they live in the vault). */
-export function exportData(data: ApiData): string {
+export function exportData(data: ConnData): string {
   return JSON.stringify({
     format: EXPORT_FORMAT,
     version: 1,

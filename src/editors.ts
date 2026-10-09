@@ -1,4 +1,5 @@
-import { api, Forward, KeyInfo, newProfile, Profile, Theme } from "./api";
+import { api, Forward, KeyInfo, newProfile, Profile, Protocol, Theme } from "./api";
+import { apiConnectionForm } from "./api-connection";
 import { allThemes, getTheme, isBuiltin, loadThemes } from "./themes";
 
 const DEFAULT_FONT = "Cascadia Mono, Consolas, 'DejaVu Sans Mono', monospace";
@@ -9,7 +10,7 @@ const FONTS = [
   "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Hack", "Courier New", "monospace",
 ];
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
-const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0 };
+const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0, api: 0 };
 
 const opt = (value: string | number, label: string, selected: boolean) =>
   h("option", { value: String(value), selected }, label);
@@ -19,16 +20,17 @@ const select = (items: [string | number, string][], current: string | number) =>
 
 // ---------------------------------------------------------------- profile editor
 
-/** Opens the profile editor. Resolves with the saved profile, or null if cancelled. */
-export async function editProfile(existing: Profile | null): Promise<Profile | null> {
+/** Opens the profile editor. Resolves with the saved profile, or null if cancelled. `protocol` preselects the kind for a new one. */
+export async function editProfile(existing: Profile | null, protocol?: Protocol): Promise<Profile | null> {
   const p: Profile = structuredClone(existing ?? newProfile());
+  if (!existing && protocol) p.protocol = protocol;
   const hadPassword = p.id ? await api.hasPassword(p.id).catch(() => false) : false;
   const keys = await api.listKeys();
   await loadThemes();
 
   const name = h("input", { value: p.name, placeholder: "e.g. core-switch-1" });
   const group = h("input", { value: p.group, placeholder: "e.g. Work, Home", list: "groups" });
-  const proto = select([["ssh", "SSH"], ["telnet", "Telnet"], ["serial", "Serial"]], p.protocol);
+  const proto = select([["ssh", "SSH"], ["telnet", "Telnet"], ["serial", "Serial"], ["api", "API"]], p.protocol);
   const host = h("input", { value: p.host, placeholder: "hostname or IP" });
   const port = h("input", { type: "number", value: String(p.port), min: "1", max: "65535" });
   const user = h("input", { value: p.username, autocomplete: "off" });
@@ -180,6 +182,10 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
     forgetHost.textContent = "Forgotten";
   } }, "Forget saved host key");
 
+  // API connection (an HTTP endpoint with saved requests)
+  const apiForm = apiConnectionForm(p.api, allProfiles.filter((x) => x.protocol === "ssh" && x.id !== p.id).sort((a, b) => a.name.localeCompare(b.name)));
+  const apiSection = h("div", {}, apiForm.el);
+
   const netSection = h("div", { class: "grid" });
   const sshSection = h("div", { class: "grid" });
   const serialSection = h("div", { class: "grid" });
@@ -206,9 +212,22 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
     h("label", { class: "check" }, clearPass, " Remove saved password"),
   );
 
+  const loginBlock = h("div", {}, h("h3", {}, "Login"), credSection);
+  const appearanceBlock = h("div", {},
+    h("h3", {}, "Appearance"),
+    h("div", { class: "grid" },
+      field("Colour theme", h("div", { class: "row" }, themeSel, editThemes)),
+      field("Font", font), field("Font size", size), field("Cursor", cursor),
+      field("Scrollback (lines)", scrollback), h("label", { class: "check" }, blink, " Blinking cursor"),
+      h("label", { class: "check" }, ligatures, " Font ligatures (needs a font that has them)"), fonts),
+    preview);
+
   const sync = () => {
     const pr = proto.value as Profile["protocol"];
-    netSection.hidden = pr === "serial";
+    netSection.hidden = pr === "serial" || pr === "api";
+    apiSection.hidden = pr !== "api";
+    loginBlock.hidden = pr === "api";
+    appearanceBlock.hidden = pr === "api";
     sshSection.hidden = pr !== "ssh";
     fwdSection.hidden = pr !== "ssh";
     filesSection.hidden = pr !== "ssh";
@@ -219,7 +238,7 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
     pass.closest("label")!.hidden = !needsPw;
     clearPass.closest("label")!.hidden = !needsPw;
     if (!p.id || Number(port.value) === DEFAULT_PORT[p.protocol]) port.value = String(DEFAULT_PORT[pr] || "");
-    plainWarn.hidden = pr === "ssh";
+    plainWarn.hidden = pr === "ssh" || pr === "api";
     p.protocol = pr;
   };
   proto.addEventListener("change", sync);
@@ -231,15 +250,9 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
     { class: "editor" },
     h("div", { class: "grid" }, field("Name", name), field("Group", group), field("Protocol", proto)),
     h("datalist", { id: "groups" }, ...[...new Set(allProfiles.map((x) => x.group).filter(Boolean))].map((g) => h("option", { value: g }))),
-    h("h3", {}, "Connection"), netSection, serialSection, sshSection, fwdSection, filesSection,
-    h("h3", {}, "Login"), credSection,
-    h("h3", {}, "Appearance"),
-    h("div", { class: "grid" },
-      field("Colour theme", h("div", { class: "row" }, themeSel, editThemes)),
-      field("Font", font), field("Font size", size), field("Cursor", cursor),
-      field("Scrollback (lines)", scrollback), h("label", { class: "check" }, blink, " Blinking cursor"),
-      h("label", { class: "check" }, ligatures, " Font ligatures (needs a font that has them)"), fonts),
-    preview,
+    h("h3", {}, "Connection"), netSection, serialSection, sshSection, fwdSection, filesSection, apiSection,
+    loginBlock,
+    appearanceBlock,
   );
 
   let saved: Profile | null = null;
@@ -250,8 +263,10 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
       primary: true,
       action: async () => {
         if (!name.value.trim()) throw new Error("Name is required");
-        if (p.protocol === "serial" ? !serialPort.value.trim() : !host.value.trim())
+        if (p.protocol !== "api" && (p.protocol === "serial" ? !serialPort.value.trim() : !host.value.trim()))
           throw new Error(p.protocol === "serial" ? "Serial port is required" : "Host is required");
+        const problem = p.protocol === "api" ? apiForm.problem() : null;
+        if (problem) throw new Error(problem);
         if (p.protocol === "ssh" && authSel.value !== "password" && !keySel.value)
           throw new Error("Choose a private key (or import one with Manage keys)");
         const live = p.protocol === "ssh" ? fwds.filter((f) => f.listenPort || f.destHost !== "localhost" || f.destPort) : [];
@@ -266,7 +281,8 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
           forwards: live,
           localDir: p.protocol === "ssh" ? localDir.value.trim() : "",
           remoteDir: p.protocol === "ssh" ? remoteDir.value.trim() : "",
-          name: name.value.trim(), group: group.value.trim(), host: host.value.trim(),
+          name: name.value.trim(), group: group.value.trim(), host: p.protocol === "api" ? apiForm.read().baseUrl : host.value.trim(),
+          api: p.protocol === "api" ? apiForm.read() : p.api,
           port: Number(port.value) || DEFAULT_PORT[p.protocol], username: user.value,
           authMethod: authSel.value, keyId: keySel.value || null,
         });

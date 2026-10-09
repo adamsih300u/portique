@@ -2,15 +2,15 @@ import { api, HttpPayload, HttpResult, Profile } from "./api";
 import { Captured, CheckResult, ResponseView, runCaptures, runChecks } from "./http-checks";
 import { environmentsDialog } from "./http-env";
 import {
-  AuthKind, BodyKind, blankRequest, Capture, Check, fmtBytes, fmtMillis, fromCurl, HttpRequest, JSON_TOKEN, looksLikeCurl, METHODS,
-  Method, Pair, paramsFromUrl, prettyJson, sanitizeRequest, toCurl, withQuery,
+  ApiSettings, AuthKind, BodyKind, blankRequest, Capture, Check, fmtBytes, fmtMillis, fromCurl, HttpRequest, isAbsoluteUrl, JSON_TOKEN,
+  looksLikeCurl, mergeHeaders, METHODS, Method, Pair, paramsFromUrl, prettyJson, resolveUrl, sanitizeRequest, stripBase, toCurl, withQuery,
 } from "./http-model";
 import { dropProxy, proxyPort } from "./http-proxy";
-import { httpStore } from "./http-store";
+import type { ConnStore } from "./http-store";
 import { MenuEntries, menuOn } from "./menu";
 import { h, promptText } from "./ui";
 
-type Section = "params" | "headers" | "auth" | "body" | "after" | "options";
+type Section = "params" | "headers" | "auth" | "body" | "after";
 type Outcome = { res: HttpResult } | { error: string } | { cancelled: true } | null;
 
 const LAYOUT_KEY = "portique.api.layout";
@@ -42,7 +42,7 @@ function replaceAll<T>(arr: T[], next: T[]) {
  * Editable rows of on/off, name, value. There is always an empty row at the end to type into;
  * typing in it makes it real, without redrawing (and so without losing the cursor).
  */
-function pairsTable(pairs: Pair[], onChange: () => void, o: { key: string; value: string; names?: string }) {
+export function pairsTable(pairs: Pair[], onChange: () => void, o: { key: string; value: string; names?: string }) {
   const el = h("div", { class: "kv" });
   const row = (p: Pair | null): HTMLElement => {
     let cur = p;
@@ -130,15 +130,25 @@ function highlightJson(text: string): DocumentFragment {
   return frag;
 }
 
-// ---------------------------------------------------------------- the tab
+// ---------------------------------------------------------------- the request editor
 
-export class ApiTab {
-  readonly el = h("div", { class: "apitab" });
-  readonly header: HTMLElement;
-  readonly closeBtn = h("button", { class: "mini", title: "Close tab" }, "✕");
-  private readonly label = h("span", { class: "tlabel" });
-  private readonly badge = h("span", {});
-  private readonly dirtyDot = h("span", { class: "api-dirty", title: "Unsaved changes" }, "•");
+/** What a request editor needs from the connection tab that holds it. */
+export interface EditorHost {
+  readonly store: ConnStore;
+  /** The connection's current settings, read whenever a request is sent, so edits to the connection apply at once. */
+  settings(): ApiSettings;
+  connName(): string;
+  /** The request's name, method or unsaved state changed. */
+  onState(e: RequestEditor): void;
+  /** Open the connection's settings. */
+  editConnection(): void;
+}
+
+const AUTH_NAMES: Record<AuthKind, string> = { inherit: "", none: "none", bearer: "Bearer token", basic: "username and password", header: "API key", oauth2: "OAuth 2.0" };
+
+/** One request: its address, what it sends, and the last response. */
+export class RequestEditor {
+  readonly el = h("div", { class: "reqedit" });
 
   req: HttpRequest;
   private baseline: string;
@@ -156,7 +166,8 @@ export class ApiTab {
   disposed = false;
 
   private readonly method = h("select", { class: "api-method", "aria-label": "Method" }, ...METHODS.map((m) => h("option", { value: m }, m)));
-  private readonly url = h("input", { class: "api-url", spellcheck: false, autocomplete: "off", placeholder: "Enter a URL, or paste a curl command" });
+  private readonly baseChip = h("span", { class: "api-base" });
+  private readonly url = h("input", { class: "api-url", spellcheck: false, autocomplete: "off", placeholder: "/path, or paste a curl command" });
   private readonly send = h("button", { class: "primary api-send" });
   private readonly envSel = h("select", { class: "api-env", title: "Environment: the values that {{variables}} are filled in with" });
   private readonly sections = h("div", { class: "api-sections", role: "tablist" });
@@ -167,15 +178,12 @@ export class ApiTab {
   private readonly unsubscribe: () => void;
 
   /** `saved` opens a saved request; otherwise a new, empty one. */
-  constructor(saved?: HttpRequest) {
+  constructor(private readonly host: EditorHost, saved?: HttpRequest) {
     this.req = saved ? sanitizeRequest(structuredClone(saved)) : blankRequest();
     this.baseline = JSON.stringify(this.req);
     this.section = this.req.bodyKind !== "none" ? "body" : "params";
 
-    this.header = h("div", { class: "tab apitab-header" }, this.label, h("span", { class: "tbadge" }, this.badge), this.dirtyDot, this.closeBtn);
-    this.header.style.setProperty("--tab-bg", "var(--bg)");
-
-    const bar = h("div", { class: "api-bar" }, this.method, this.url, this.send, this.envSel);
+    const bar = h("div", { class: "api-bar" }, this.method, h("div", { class: "api-addr-box" }, this.baseChip, this.url), this.send, this.envSel);
     const gutter = h("div", { class: "gutter api-gutter", title: "Drag to resize" });
     const split = h("div", { class: "api-split" }, this.reqBox, gutter, this.resBox);
     this.reqBox.append(this.sections, this.panel);
@@ -185,7 +193,9 @@ export class ApiTab {
 
     this.wire();
     this.fillEnvs();
-    this.unsubscribe = (() => { const f = () => { this.fillEnvs(); this.syncMeta(); }; httpStore.listeners.add(f); return () => httpStore.listeners.delete(f); })();
+    const onStore = () => { this.fillEnvs(); this.syncMeta(); };
+    this.host.store.listeners.add(onStore);
+    this.unsubscribe = () => this.host.store.listeners.delete(onStore);
     this.syncFromRequest();
     this.setSending(false);
     this.renderResponse();
@@ -214,9 +224,9 @@ export class ApiTab {
     this.envSel.addEventListener("change", async () => {
       if (this.envSel.value === "\0manage") {
         this.fillEnvs();
-        await environmentsDialog(httpStore.data.activeEnv);
+        await environmentsDialog(this.host.store, this.host.store.data.activeEnv);
         this.fillEnvs();
-      } else await httpStore.setActiveEnv(this.envSel.value);
+      } else await this.host.store.setActiveEnv(this.envSel.value);
     });
     window.addEventListener("keydown", this.onKey);
     // Right-clicking blank space (not a text box, which keeps its own copy/paste menu) opens the request menu.
@@ -266,9 +276,9 @@ export class ApiTab {
     this.applyLayout(split);
   }
 
-  /** Shortcuts work whenever this is the tab on screen, wherever focus happens to be (but not under a dialog). */
+  /** Shortcuts work whenever this is the request on screen, wherever focus happens to be (but not under a dialog). */
   private readonly onKey = (e: KeyboardEvent) => {
-    if (this.el.style.display === "none" || document.querySelector(".overlay")) return;
+    if (this.el.getClientRects().length === 0 || document.querySelector(".overlay")) return;
     const plain = e.ctrlKey && !e.altKey && !e.shiftKey;
     if (plain && e.key === "Enter") { e.preventDefault(); void this.sendNow(); }
     else if (plain && e.key.toLowerCase() === "s") { e.preventDefault(); void this.save(); }
@@ -293,7 +303,7 @@ export class ApiTab {
   }
 
   get dirty(): boolean {
-    return JSON.stringify(this.req) !== this.baseline && !(this.isBlank() && !httpStore.request(this.req.id));
+    return JSON.stringify(this.req) !== this.baseline && !(this.isBlank() && !this.host.store.request(this.req.id));
   }
 
   private isBlank(): boolean {
@@ -302,12 +312,26 @@ export class ApiTab {
   }
 
   private refreshHeader() {
-    this.label.textContent = requestLabel(this.req);
-    this.badge.textContent = this.req.method;
-    this.badge.className = `m-${this.req.method}`;
     this.method.className = `api-method m-${this.req.method}`;
-    this.dirtyDot.style.display = this.dirty ? "" : "none";
-    this.header.title = this.req.url || "New request";
+    this.refreshBase();
+    this.host.onState(this);
+  }
+
+  /** The connection's base address, shown dimmed in front of the path. */
+  private refreshBase() {
+    const base = this.host.settings().baseUrl;
+    const own = isAbsoluteUrl(this.req.url);
+    this.baseChip.textContent = base.replace(/^[a-z]+:\/\//i, "");
+    this.baseChip.style.display = base ? "" : "none";
+    this.baseChip.classList.toggle("off", own);
+    this.baseChip.title = own
+      ? "This request has a full address of its own, so the connection's base address isn't used"
+      : `The base address of ${this.host.connName()}. Change it in the connection's settings.`;
+  }
+
+  /** The address the request really goes to. */
+  private fullUrl(): string {
+    return resolveUrl(this.host.settings().baseUrl, this.req.url);
   }
 
   private count(s: Section): string {
@@ -315,16 +339,15 @@ export class ApiTab {
     switch (s) {
       case "params": return enabled(r.params).length ? String(enabled(r.params).length) : "";
       case "headers": return enabled(r.headers).length ? String(enabled(r.headers).length) : "";
-      case "auth": return { none: "", bearer: "Bearer", basic: "Basic", header: "Key", oauth2: "OAuth" }[r.auth.kind];
+      case "auth": return { inherit: "", none: "none", bearer: "Bearer", basic: "Basic", header: "Key", oauth2: "OAuth" }[r.auth.kind];
       case "after": { const n = r.checks.filter((c) => c.on).length + r.captures.filter((c) => c.on && c.name).length; return n ? String(n) : ""; }
-      case "options": return r.via ? "SSH" : "";
       case "body": return { none: "", json: "JSON", text: "Text", form: "Form" }[r.bodyKind];
       default: return "";
     }
   }
 
   private renderSections(onlyCounts = false) {
-    const defs: [Section, string][] = [["params", "Params"], ["headers", "Headers"], ["auth", "Auth"], ["body", "Body"], ["after", "After"], ["options", "Options"]];
+    const defs: [Section, string][] = [["params", "Params"], ["headers", "Headers"], ["auth", "Auth"], ["body", "Body"], ["after", "After"]];
     if (onlyCounts && this.sections.children.length === defs.length) {
       defs.forEach(([s], i) => { (this.sections.children[i].querySelector(".cnt") as HTMLElement).textContent = this.count(s); });
       return;
@@ -354,11 +377,16 @@ export class ApiTab {
       case "headers": {
         const list = h("datalist", { id: "api-header-names" }, ...HEADER_NAMES.map((n) => h("option", { value: n })));
         const t = pairsTable(r.headers, () => this.changed(), { key: "Header", value: "value", names: "api-header-names" });
-        this.panel.replaceChildren(list, t.el, note("Content-Type is set for you when you choose a JSON or form body."));
+        const inherited = mergeHeaders(this.host.settings().headers, []).filter((c) => !r.headers.some((x) => x.on && x.key.trim().toLowerCase() === c.key.trim().toLowerCase()));
+        this.panel.replaceChildren(list, t.el,
+          ...(inherited.length ? [note("Also sent with every request on this connection: ", h("code", {}, inherited.map((x) => x.key.trim()).join(", ")), ". Add a header here with the same name to replace one.")] : []),
+          note("Content-Type is set for you when you choose a JSON or form body."));
         break;
       }
       case "auth": {
-        const kind = h("select", {}, ...([["none", "No authentication"], ["bearer", "Bearer token"], ["basic", "Username and password"], ["header", "API key in a header"], ["oauth2", "OAuth 2.0 (client credentials)"]] as [AuthKind, string][])
+        const cAuth = this.host.settings().auth.kind;
+        const inheritLabel = `Use the connection's sign-in (${cAuth === "none" ? "none" : AUTH_NAMES[cAuth]})`;
+        const kind = h("select", {}, ...([["inherit", inheritLabel], ["none", "No authentication"], ["bearer", "Bearer token"], ["basic", "Username and password"], ["header", "API key in a header"], ["oauth2", "OAuth 2.0 (client credentials)"]] as [AuthKind, string][])
           .map(([v, l]) => h("option", { value: v, selected: v === r.auth.kind }, l)));
         const fields = h("div", { class: "api-fields" });
         const draw = () => {
@@ -369,13 +397,14 @@ export class ApiTab {
             return field(label, i);
           };
           fields.replaceChildren(...({
-            none: () => [note("This request is sent without credentials.")],
+            inherit: () => [note(cAuth === "none" ? "The connection has no sign-in set up, so this request is sent without credentials. Pick a type above to give this request its own." : `Signs in the way the connection does (${AUTH_NAMES[cAuth]}). Change that in the connection's settings, or pick a type above to use something different for this request.`)],
+            none: () => [note("This request is sent without credentials, even if the connection has some.")],
             bearer: () => [mk("Token", "token", false, "{{token}}"), note("Sent as ", h("code", {}, "Authorization: Bearer …"), ".")],
             basic: () => [mk("Username", "user"), mk("Password", "pass", true)],
             header: () => [mk("Header name", "name", false, "X-API-Key"), mk("Value", "value", false, "{{apiKey}}")],
             oauth2: () => [mk("Token URL", "tokenUrl", false, "https://login.example.com/oauth/token"), mk("Client ID", "clientId", false, "{{clientId}}"), mk("Client secret", "clientSecret", true, "{{clientSecret}}"), mk("Scope (optional)", "scope"),
               note("Portique signs in for you when you press Send, keeps the token until it expires, and signs in again if the API refuses it.")],
-          }[a.kind]()), ...(a.kind === "none" ? [] : [note("Tip: put the secret in an environment and enter it here as ", h("code", {}, "{{name}}"), ", so it stays in the vault and out of saved requests.")]));
+          }[a.kind]()), ...(a.kind === "none" || a.kind === "inherit" ? [] : [note("Tip: put the secret in an environment and enter it here as ", h("code", {}, "{{name}}"), ", so it stays in the vault and out of saved requests.")]));
         };
         kind.addEventListener("change", () => { r.auth.kind = kind.value as AuthKind; draw(); this.changed(); });
         draw();
@@ -465,35 +494,12 @@ export class ApiTab {
           note("Values are kept in the selected environment, so the next request can use them as ", h("code", {}, "{{name}}"), ". Handy for tokens and ids. Tick Secret to keep one in the vault."));
         break;
       }
-      case "options": {
-        const follow = h("input", { type: "checkbox", checked: r.follow });
-        const insecure = h("input", { type: "checkbox", checked: r.insecure });
-        const timeout = h("input", { type: "number", min: "1", max: "3600", value: String(r.timeout), class: "api-num" });
-        follow.addEventListener("change", () => { r.follow = follow.checked; this.changed(); });
-        insecure.addEventListener("change", () => { r.insecure = insecure.checked; this.changed(); });
-        timeout.addEventListener("input", () => { r.timeout = Math.max(1, Number(timeout.value) || 30); this.changed(); });
-        const from = h("select", {}, h("option", { value: "" }, "This computer"));
-        void sshProfiles().then((list) => {
-          from.append(...list.map((p) => h("option", { value: p.id, selected: p.id === r.via }, p.name)));
-          if (r.via && !list.some((p) => p.id === r.via)) from.append(h("option", { value: r.via, selected: true }, "(a profile that no longer exists)"));
-          from.value = r.via;
-        });
-        from.addEventListener("change", () => { r.via = from.value; this.changed(); });
-        this.panel.replaceChildren(
-          field("Send from", from),
-          note("Choose an SSH host to send the request from there. It travels through that server, which also looks up the address, so private services only the server can reach work. Portique logs in when you press Send."),
-          h("label", { class: "check" }, follow, " Follow redirects"),
-          h("label", { class: "check" }, insecure, " Allow self-signed certificates"),
-          note("Only for servers you trust, such as a test machine. The connection is still encrypted, but the server's identity isn't checked."),
-          field("Give up after (seconds)", timeout));
-        break;
-      }
     }
   }
 
   /** A rename or move done from the sidebar shows up here too, without counting as an unsaved change. */
   private syncMeta() {
-    const saved = httpStore.request(this.req.id);
+    const saved = this.host.store.request(this.req.id);
     if (!saved || (saved.name === this.req.name && saved.group === this.req.group)) return;
     const base = JSON.parse(this.baseline);
     this.req.name = base.name = saved.name;
@@ -505,7 +511,7 @@ export class ApiTab {
   // ------------------------------------------------------------ environments
 
   private fillEnvs() {
-    const { envs, activeEnv } = httpStore.data;
+    const { envs, activeEnv } = this.host.store.data;
     this.envSel.replaceChildren(
       h("option", { value: "" }, "No environment"),
       ...envs.map((e) => h("option", { value: e.id }, e.name)),
@@ -517,13 +523,14 @@ export class ApiTab {
 
   private payload(id: string): HttpPayload {
     const r = this.req;
-    const env = httpStore.env;
-    const a = r.auth;
+    const conn = this.host.settings();
+    const env = this.host.store.env;
+    const a = r.auth.kind === "inherit" ? conn.auth : r.auth;
     return {
       id,
       method: r.method,
-      url: r.url,
-      headers: enabled(r.headers).map((p): [string, string] => [p.key.trim(), p.value]),
+      url: this.fullUrl(),
+      headers: mergeHeaders(conn.headers, r.headers).map((p): [string, string] => [p.key.trim(), p.value]),
       body: r.bodyKind === "none" ? { kind: "none" }
         : r.bodyKind === "form" ? { kind: "form", pairs: enabled(r.form).map((p): [string, string] => [p.key, p.value]) }
         : { kind: r.bodyKind, text: r.bodyText },
@@ -532,9 +539,9 @@ export class ApiTab {
         : a.kind === "header" ? { kind: "header", name: a.name, value: a.value }
         : a.kind === "oauth2" ? { kind: "oauth2", tokenUrl: a.tokenUrl, clientId: a.clientId, clientSecret: a.clientSecret, scope: a.scope }
         : { kind: "none" },
-      insecure: r.insecure,
-      followRedirects: r.follow,
-      timeoutSecs: r.timeout,
+      insecure: conn.insecure,
+      followRedirects: conn.follow,
+      timeoutSecs: conn.timeout,
       envId: env?.id ?? "",
       vars: Object.fromEntries((env?.vars ?? []).filter((v) => !v.secret && v.key).map((v) => [v.key, v.value])),
     };
@@ -542,8 +549,8 @@ export class ApiTab {
 
   async sendNow() {
     if (this.inflight) return;
-    if (!this.req.url.trim()) {
-      this.outcome = { error: "Enter a URL to send the request to." };
+    if (!this.fullUrl().trim()) {
+      this.outcome = { error: "Enter an address to send the request to." };
       this.after = null;
       this.renderResponse();
       this.url.focus();
@@ -557,13 +564,13 @@ export class ApiTab {
     this.view = "body";
     this.busyText = "Waiting for the server…";
     this.setSending(true);
-    const via = this.req.via;
+    const via = this.host.settings().via;
     this.lastVia = "";
     try {
       let port: number | undefined;
       if (via) {
         const p = (await sshProfiles()).find((x) => x.id === via);
-        if (!p) throw new Error("The SSH profile this request is sent from no longer exists. Choose another one under Options.");
+        if (!p) throw new Error("The SSH host this connection sends from no longer exists. Choose another in the connection's settings.");
         this.lastVia = p.name;
         this.busyText = `Connecting to ${p.name}…`;
         this.renderResponse();
@@ -597,7 +604,7 @@ export class ApiTab {
     const captured = runCaptures(r.captures, view);
     let saved = true;
     const found = captured.filter((c) => c.value !== null).map((c) => ({ name: c.name, value: c.value as string, secret: c.secret }));
-    if (found.length) saved = await httpStore.capture(found).catch(() => false);
+    if (found.length) saved = await this.host.store.capture(found).catch(() => false);
     this.after = { results, captured, saved };
     if (results.some((c) => !c.pass)) this.view = "checks"; // a failure is worth seeing right away
   }
@@ -688,8 +695,9 @@ export class ApiTab {
       { label: this.inflight ? "Cancel request" : "Send", hint: this.inflight ? "Esc" : "Ctrl+Enter", action: () => (this.inflight ? this.cancel() : void this.sendNow()) },
       { label: "Save", hint: "Ctrl+S", action: () => void this.save() },
       null,
-      { label: "Copy as cURL", action: () => void navigator.clipboard.writeText(toCurl(this.req)) },
-      { label: "Environments…", action: () => void environmentsDialog(httpStore.data.activeEnv).then(() => this.fillEnvs()) },
+      { label: "Copy as cURL", action: () => void navigator.clipboard.writeText(toCurl(this.req, this.host.settings())) },
+      { label: "Environments…", action: () => void environmentsDialog(this.host.store, this.host.store.data.activeEnv).then(() => this.fillEnvs()) },
+      { label: "Connection settings…", action: () => this.host.editConnection() },
       { label: "Show response beside the request", checked: this.el.querySelector(".api-split")?.classList.contains("side"), action: () => this.toggleLayout() },
     ];
   }
@@ -705,7 +713,7 @@ export class ApiTab {
         this.req.name = typed.slice(slash + 1).trim();
       } else this.req.name = typed;
     }
-    await httpStore.saveRequest(this.req);
+    await this.host.store.saveRequest(this.req);
     this.baseline = JSON.stringify(this.req);
     this.refreshHeader();
     return true;
@@ -714,6 +722,8 @@ export class ApiTab {
   private importCurl(text: string) {
     try {
       const r = fromCurl(text);
+      r.url = stripBase(this.host.settings().baseUrl, r.url); // a full address on this connection becomes a short one
+      r.params = paramsFromUrl(r.url, []);
       this.req = { ...r, id: this.req.id, name: this.req.name, group: this.req.group };
       this.section = this.req.bodyKind !== "none" ? "body" : this.req.headers.length ? "headers" : "params";
       this.syncFromRequest();
@@ -723,40 +733,29 @@ export class ApiTab {
     }
   }
 
-  // ------------------------------------------------------------ Tab-like surface used by the app shell
+  // ------------------------------------------------------------ used by the connection tab
 
-  show(on: boolean) {
-    this.el.style.display = on ? "" : "none";
-    this.header.classList.toggle("active", on);
-    this.header.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-    if (on && !this.url.value) this.url.focus();
+  /** The connection's settings changed (base address, sign-in, headers): refresh what shows them. */
+  applyConnection() {
+    this.refreshBase();
+    if (this.section === "auth" || this.section === "headers") this.renderPanel();
   }
 
-  refit() {}
-  setGpu(_on: boolean) {}
-  applyProfile(_p: Profile) {}
-  usesProfile(_id: string) { return false; }
+  /** Puts the cursor in the address box when there is nothing in it yet. */
+  focusIfEmpty() {
+    if (!this.url.value) this.url.focus();
+  }
 
   get title(): string {
     return requestLabel(this.req);
   }
 
-  /** The id of the saved request this tab edits. */
-  get requestId(): string {
-    return this.req.id;
-  }
-
-  /** Called when the tab is closing; false if the user chose to keep it open. */
-  confirmClose(): boolean {
-    return !this.dirty || confirm(`"${requestLabel(this.req)}" has changes that aren't saved. Close it anyway?`);
-  }
-
+  /** Stops anything in flight and lets go of the shortcut handler. */
   dispose() {
     this.disposed = true;
     if (this.inflight) void api.httpCancel(this.inflight);
     this.unsubscribe();
     window.removeEventListener("keydown", this.onKey);
     this.el.remove();
-    this.header.remove();
   }
 }
