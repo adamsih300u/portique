@@ -2,8 +2,13 @@ name: CI
 
 # Pull requests only. A push to dev is built and published by dev-release.yml,
 # and a push to main by release.yml.
+#
+# `closed` is listed so that merging or closing a PR starts a run in the PR's
+# concurrency group, which cancels any run still in flight. Every job is skipped
+# on that closing run.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
     branches: [main, dev]
 
 concurrency:
@@ -15,6 +20,7 @@ permissions:
 
 jobs:
   changes:
+    if: github.event.action != 'closed'
     uses: ./.github/workflows/changes.yml
 
   # Skipped (which counts as passing for required checks) when only docs or repo
@@ -30,6 +36,7 @@ jobs:
     uses: ./.github/workflows/build.yml
 
   change-file:
+    if: github.event.action != 'closed'
     # One PR adds one docs/changes/<slug>.md with its decisions (AGENTS.md). Label a PR
     # `no-change-file` to skip; bot PRs (dependencies, releases) are skipped automatically.
     runs-on: ubuntu-latest
@@ -45,6 +52,7 @@ jobs:
           SKIP: ${{ (contains(github.event.pull_request.labels.*.name, 'no-change-file') || endsWith(github.actor, '[bot]') || startsWith(github.head_ref, 'release-please--')) && '1' || '' }}
 
   pr-title:
+    if: github.event.action != 'closed'
     # Release notes and version bumps are derived from Conventional Commits.
     # PRs are squash-merged, so the PR title becomes the commit message.
     runs-on: ubuntu-latest
