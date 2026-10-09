@@ -131,8 +131,12 @@ pub fn start(
     let sessions = sessions.clone();
     let sid = id.clone();
     tauri::async_runtime::spawn(async move {
-        // A shell on this computer needs nothing from the vault.
-        if profile.protocol != Protocol::Local && !crate::vault::global().is_unlocked() {
+        // A shell on this computer needs nothing from the vault, and neither does a fresh install that has none yet.
+        let locked = {
+            let v = crate::vault::global();
+            v.exists() && !v.is_unlocked()
+        };
+        if profile.protocol != Protocol::Local && locked {
             em.status("vault-locked", "Vault is locked");
             sessions.map.lock().unwrap().remove(&sid);
             return;
