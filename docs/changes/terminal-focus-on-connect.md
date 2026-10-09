@@ -1,7 +1,7 @@
 # Put the cursor in the terminal once a connection is up
 
 - **Branch:** `fix/terminal-focus-on-connect`
-- **PR:** not pushed yet (no pushes during work hours)
+- **PR:** https://github.com/adamsih300u/portique/pull/24
 - **Status:** draft
 - **Author:** Claude
 
