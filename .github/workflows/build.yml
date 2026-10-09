@@ -81,11 +81,11 @@ jobs:
           base="portique-${{ steps.ver.outputs.version }}${{ inputs.version-suffix }}"
           rel=src-tauri/target/release
           mkdir -p out release
-          cp "$rel/${{ matrix.binary }}" out/
+          cp "$rel/${{ matrix.binary }}" LICENSE THIRD-PARTY-NOTICES.md THIRD-PARTY-LICENSES.md out/
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            (cd out && 7z a -tzip "../release/$base-${{ matrix.name }}.zip" "${{ matrix.binary }}")
+            (cd out && 7z a -tzip "../release/$base-${{ matrix.name }}.zip" .)
           else
-            tar -C out -czf "release/$base-${{ matrix.name }}.tar.gz" "${{ matrix.binary }}"
+            tar -C out -czf "release/$base-${{ matrix.name }}.tar.gz" .
             cp "$rel"/bundle/appimage/*.AppImage "release/$base-linux-x64.AppImage"
             cp "$rel"/bundle/deb/*.deb "release/$base-linux-x64.deb"
           fi
