@@ -1,6 +1,6 @@
 # Saved commands for each profile
 
-- **Branch:** `feat/profile-commands` (stacked on `feat/palette-quick-connect`)
+- **Branch:** `feat/profile-commands`
 - **PR:** (draft, see GitHub)
 - **Status:** draft
 - **Author:** Claude, for Adam
