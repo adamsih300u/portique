@@ -159,13 +159,18 @@ export class TerminalTab {
 
   private options(p: Profile) {
     const a = p.appearance;
+    const theme = getTheme(a.themeId);
+    // A theme's spacing belongs to its font, so it only applies while that font is the one in use.
+    const spaced = theme.fontFamily !== undefined && theme.fontFamily === a.fontFamily;
     return {
       fontFamily: a.fontFamily,
+      letterSpacing: spaced ? theme.letterSpacing ?? 0 : 0,
+      lineHeight: spaced ? theme.lineHeight ?? 1 : 1,
       fontSize: a.fontSize,
       cursorStyle: a.cursorStyle,
       cursorBlink: a.cursorBlink,
       scrollback: a.scrollback,
-      theme: xtermTheme(getTheme(a.themeId)),
+      theme: xtermTheme(theme),
     };
   }
 
@@ -285,6 +290,17 @@ export class TerminalTab {
       this.fit.fit();
     } catch {}
     if (this.sessionId) void api.resize(this.sessionId, this.term.cols, this.term.rows);
+  }
+
+  /**
+   * Once the link is up, put the cursor in the terminal, so a double-click on a profile
+   * needs no extra click. Only when this pane is on screen and nothing else holds focus
+   * (a dialog or another pane the user is typing in keeps it).
+   */
+  private takeFocusIfIdle() {
+    const a = document.activeElement;
+    const idle = !a || a === document.body || a === document.documentElement;
+    if (idle && this.el.offsetParent !== null) this.term.focus();
   }
 
   focus() {
@@ -469,6 +485,7 @@ export class TerminalTab {
         this.attempt = 0;
         this.setState("connected");
         this.refit();
+        this.takeFocusIfIdle();
         break;
       case "lost":
         if (this.profile.autoReconnect) this.scheduleReconnect("Connection lost");
