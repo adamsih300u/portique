@@ -31,4 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo install cargo-audit --locked
-      - run: cargo audit --file src-tauri/Cargo.lock
+      # RUSTSEC-2023-0071 (Marvin timing attack on RSA private-key operations) is accepted: it affects the
+      # `rsa` crate that `russh` pulls in, no fixed release exists, and we need RSA for imported keys and
+      # RSA host keys. Remove the flag once `rsa` publishes a fix. See docs/changes/audit-ignore-rsa.md.
+      - run: cargo audit --file src-tauri/Cargo.lock --ignore RUSTSEC-2023-0071
