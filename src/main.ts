@@ -231,11 +231,66 @@ function addTab(layout: Layout): Tab | null {
   t.header.addEventListener("contextmenu", (e) => menuOn(e, tabMenu(t)));
   t.closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
   t.onChange = persist;
+  t.onRetitle = renumber;
+  dragReorder(t);
   t.onPaneMenu = (e) => menuOn(e, paneMenu(t));
   tabs.push(t);
   tabBar.append(t.header);
   stage.append(t.el);
+  renumber();
   return t;
+}
+
+/** Terminal tabs on the same profile are numbered 1, 2, 3… in tab order; a lone tab keeps its plain name. */
+function renumber() {
+  const groups = new Map<string, Tab[]>();
+  for (const t of tabs) if (t instanceof Tab) groups.set(t.focused.profile.id, [...(groups.get(t.focused.profile.id) ?? []), t]);
+  for (const g of groups.values()) g.forEach((t, i) => t.setOrdinal(g.length > 1 ? i + 1 : 0));
+}
+
+/** Lets a tab header be dragged to a new place in the tab bar. */
+let dragging: AnyTab | null = null;
+function dragReorder(t: AnyTab) {
+  const el = t.header;
+  const side = (e: DragEvent) => (e.clientX < el.getBoundingClientRect().left + el.offsetWidth / 2 ? "before" : "after");
+  const clear = () => el.classList.remove("drop-before", "drop-after");
+  el.draggable = true;
+  el.addEventListener("dragstart", (e) => {
+    dragging = t;
+    e.dataTransfer?.setData("text/plain", t.title);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    el.classList.add("dragging");
+  });
+  el.addEventListener("dragend", () => {
+    dragging = null;
+    el.classList.remove("dragging");
+    for (const x of tabs) x.header.classList.remove("drop-before", "drop-after");
+  });
+  el.addEventListener("dragover", (e) => {
+    if (!dragging || dragging === t) return;
+    e.preventDefault();
+    clear();
+    el.classList.add(`drop-${side(e)}`);
+  });
+  el.addEventListener("dragleave", clear);
+  el.addEventListener("drop", (e) => {
+    const moved = dragging;
+    clear();
+    if (!moved || moved === t) return;
+    e.preventDefault();
+    tabs.splice(tabs.indexOf(moved), 1);
+    const at = tabs.indexOf(t) + (side(e) === "after" ? 1 : 0);
+    tabs.splice(at, 0, moved);
+    const next = tabs[at + 1];
+    tabBar.insertBefore(moved.header, next ? next.header : tabBar.querySelector(".tab-drag"));
+    renumber();
+    persist();
+  });
+}
+
+async function renameTab(tab: Tab) {
+  const name = await promptText("Rename tab", "Name", tab.title);
+  if (name) tab.rename(name);
 }
 
 const LAST_API = "portique.api.last";
@@ -263,6 +318,7 @@ function newApiRequest() {
 }
 
 function attach(t: FileTab | ApiTab) {
+  dragReorder(t);
   t.header.addEventListener("click", () => activate(t));
   t.header.addEventListener("auxclick", (e) => e.button === 1 && closeTab(t));
   t.header.addEventListener("contextmenu", (e) => menuOn(e, tabMenu(t)));
@@ -303,6 +359,7 @@ function closeTab(tab: AnyTab) {
   const i = tabs.indexOf(tab);
   tabs.splice(i, 1);
   tab.dispose();
+  renumber();
   activate(active === tab ? (tabs[Math.min(i, tabs.length - 1)] ?? null) : active);
 }
 
@@ -319,6 +376,9 @@ function tabMenu(tab: AnyTab): MenuEntries {
     ...(tab.focused.profile.protocol === "ssh" ? [{ label: "Open file browser for this host", action: () => openFiles(tab.focused.profile) }, null] : []),
     { label: "Split right", hint: "Ctrl+Shift+D", action: on(() => tab.split("row")) },
     { label: "Split down", hint: "Ctrl+Shift+E", action: on(() => tab.split("col")) },
+    null,
+    { label: "Rename tab…", action: () => void renameTab(tab) },
+    ...(tab.customName ? [{ label: "Reset tab name", action: () => tab.rename(null) }] : []),
     null,
     ...(tab.paneCount > 1 ? [{ label: "Close pane", hint: "Ctrl+Shift+W", action: on(() => closePane(tab)) }] : []),
     { label: "Close tab", action: () => closeTab(tab) },
