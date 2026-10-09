@@ -162,6 +162,9 @@ pub struct Profile {
     pub remote_dir: String,
     /// API only: base address, default sign-in and headers, and options. Opaque here: the frontend owns the shape.
     pub api: serde_json::Value,
+    /// Commands offered in the palette while a tab for this profile is on screen. Opaque here: the frontend owns the shape.
+    /// Plain data like the host name, so nothing secret belongs in one.
+    pub commands: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -238,6 +241,7 @@ pub fn add_quick(p: Profile) -> Result<Profile> {
         jump_host: None,
         forwards: Vec::new(),
         api: serde_json::Value::Null,
+        commands: serde_json::Value::Null,
         ..p
     };
     quick_profiles().lock().unwrap().insert(q.id.clone(), q.clone());
@@ -264,6 +268,17 @@ mod tests {
             cursor: "#ffffff".into(), selection: "#333333".into(), ansi: vec!["#123456".into(); 16],
             font_family: Some("'Irix Screen Mono 15', monospace".into()), font_size: Some(15.0),
         }
+    }
+
+    #[test]
+    fn saved_commands_round_trip_untouched_and_older_profiles_have_none() {
+        let old: Profile = serde_json::from_str(r#"{"id":"a","name":"srv","protocol":"ssh","host":"h","port":22}"#).unwrap();
+        assert!(old.commands.is_null());
+
+        let cmds = serde_json::json!([{ "id": "1", "name": "Disk", "text": "df -h", "mode": "run" }]);
+        let p = Profile { commands: cmds.clone(), ..Default::default() };
+        let back: Profile = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back.commands, cmds);
     }
 
     #[test]

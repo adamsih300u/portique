@@ -400,6 +400,18 @@ export class TerminalTab {
     if (s) await navigator.clipboard.writeText(s).catch(() => {});
   }
 
+  get connected() {
+    return this.state === "connected";
+  }
+
+  /** Types a saved command into the session (as a paste, so a multi-line one is safe); `enter` also runs it. */
+  typeCommand(text: string, enter: boolean) {
+    if (!this.connected) return;
+    this.term.paste(text.replace(/\r?\n/g, "\r"));
+    if (enter) this.send(toBytes("\r"));
+    this.term.focus();
+  }
+
   async paste() {
     const s = await navigator.clipboard.readText().catch(() => "");
     if (s) this.term.paste(s);

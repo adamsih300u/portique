@@ -1,5 +1,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { type ApiSettings, defaultApiSettings, sanitizeApiSettings } from "./http-model";
+import { type SavedCommand, sanitizeCommands } from "./saved-commands";
 
 export type Protocol = "ssh" | "telnet" | "serial" | "api";
 export type AuthMethod = "password" | "key" | "keyAndPassword";
@@ -54,6 +55,8 @@ export interface Profile {
   remoteDir: string;
   /** API only: base address, default sign-in and headers, and options. */
   api: ApiSettings;
+  /** Commands offered in the palette while a tab for this profile is on screen. */
+  commands: SavedCommand[];
 }
 
 export interface Theme {
@@ -109,6 +112,7 @@ export function newProfile(): Profile {
     localDir: "",
     remoteDir: "",
     api: defaultApiSettings(),
+    commands: [],
   };
 }
 
@@ -214,8 +218,8 @@ export interface HttpResult {
   url: string;
 }
 
-/** Profiles saved before API connections existed have no settings for one: give every profile well-formed ones. */
-const withApi = (p: Profile): Profile => ({ ...p, api: sanitizeApiSettings(p.api) });
+/** Profiles saved before API connections or saved commands existed have no settings for them: give every profile well-formed ones. */
+const withDefaults = (p: Profile): Profile => ({ ...p, api: sanitizeApiSettings(p.api), commands: sanitizeCommands(p.commands) });
 
 export const api = {
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
@@ -224,8 +228,8 @@ export const api = {
   vaultLock: () => invoke<void>("vault_lock"),
   vaultTouch: () => invoke<void>("vault_touch"),
   vaultChangePassword: (old: string, nw: string) => invoke<void>("vault_change_password", { old, new: nw }),
-  listProfiles: async () => (await invoke<Profile[]>("list_profiles")).map(withApi),
-  saveProfile: async (profile: Profile) => withApi(await invoke<Profile>("save_profile", { profile })),
+  listProfiles: async () => (await invoke<Profile[]>("list_profiles")).map(withDefaults),
+  saveProfile: async (profile: Profile) => withDefaults(await invoke<Profile>("save_profile", { profile })),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),
   getSettings: () => invoke<Settings>("get_settings"),
   setGpu: (enabled: boolean) => invoke<void>("set_gpu", { enabled }),
@@ -241,7 +245,7 @@ export const api = {
   saveTheme: (theme: Theme) => invoke<Theme>("save_theme", { theme }),
   deleteTheme: (id: string) => invoke<void>("delete_theme", { id }),
   /** Registers a host typed into quick connect; the result has an id but is never saved to disk. */
-  quickProfile: (profile: Profile) => guarded(() => invoke<Profile>("quick_profile", { profile })),
+  quickProfile: async (profile: Profile) => withDefaults(await guarded(() => invoke<Profile>("quick_profile", { profile }))),
   setPassword: (profileId: string, password: string) =>
     guarded(() => invoke<void>("set_password", { profileId, password })),
   hasPassword: (profileId: string) => guarded(() => invoke<boolean>("has_password", { profileId })),
