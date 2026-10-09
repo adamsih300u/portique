@@ -21,6 +21,7 @@ import { h, promptText } from "./ui";
 import { windowControls } from "./window-controls";
 import { changePasswordDialog, ensureUnlocked } from "./vault-ui";
 import { listen } from "@tauri-apps/api/event";
+import { initSidebar } from "./sidebar-layout";
 
 interface Workspace {
   id: string;
@@ -68,6 +69,7 @@ const moreBtn = h("button", { class: "icon", title: "Menu and settings", onclick
   const r = moreBtn.getBoundingClientRect();
   contextMenu(r.left, r.bottom + 2, [
     { label: "Save workspace…", action: () => void saveWorkspace() },
+    { label: "Sidebar", hint: "Ctrl+Shift+B", checked: !sideLayout.isCollapsed(), action: () => sideLayout.toggle() },
     null,
     { label: "SSH keys…", action: () => void manageKeysDialog() },
     { label: "Interface colours…", action: async () => { const ui = await chromeDialog(settings.ui); if (ui) settings.ui = ui; } },
@@ -89,6 +91,11 @@ document.querySelector("#app")!.append(
     h("button", { class: "help-link", title: "Keyboard shortcuts", onclick: () => toggleHelp(settings.quakeKey, settings.quake) }, "Keyboard shortcuts", h("kbd", {}, "F1"))),
   h("main", {}, tabBar, stage, empty),
 );
+
+const sideLayout = initSidebar(document.querySelector<HTMLElement>("#app")!, document.querySelector("aside")!, sidebar, () => ({
+  groups: [...new Set(profiles.map((p) => p.group || "Ungrouped")), ...(ws.named.length ? ["Workspaces"] : [])],
+  rows: [...profiles.map((p) => ({ name: p.name, icon: p.protocol })), ...ws.named.map((w) => ({ name: w.name, icon: "workspace" as const }))],
+}));
 
 // ---------------------------------------------------------------- sidebar
 
@@ -114,6 +121,7 @@ function renderProfiles() {
       ? [h("section", {}, h("div", { class: "group" }, "Workspaces"), ...named.map(workspaceRow))]
       : []),
   );
+  sideLayout.refit();
 }
 
 function profileRow(p: Profile) {
@@ -355,6 +363,7 @@ async function toggleQuake() {
 function applySettings(s: Settings) {
   settings = { ...s, ui: { ...DEFAULT_UI, ...s.ui } };
   document.documentElement.style.setProperty("--s", s.uiScale === "large" ? "1.2" : "1");
+  sideLayout.refit();
   FileTab.defaultLocalDir = s.sftpLocalDir;
   TerminalTab.gpu = s.gpu;
   for (const t of tabs) t.setGpu(s.gpu);
@@ -425,6 +434,7 @@ function paletteItems(): PaletteItem[] {
   add("App", "ssh-keys", "SSH keys…", () => void manageKeysDialog());
   add("App", "lock", "Lock the vault", () => void api.vaultLock().then(() => ensureUnlocked()));
   add("App", "master-pw", "Change master password…", () => void changePasswordDialog());
+  add("App", "sidebar", sideLayout.isCollapsed() ? "Show the sidebar" : "Hide the sidebar", () => sideLayout.toggle(), { hint: "Ctrl+Shift+B", keywords: "collapse full width" });
   add("App", "shortcuts", "Keyboard shortcuts", () => toggleHelp(settings.quakeKey, settings.quake), { hint: "F1" });
   add("Appearance", "ui-colours", "Interface colours…", () => void chromeDialog(settings.ui).then((ui) => { if (ui) settings.ui = ui; }));
   add("Appearance", "themes", "Terminal colour themes…", async () => { await themeDialog("portique-nuit"); await loadThemes(); renderProfiles(); });
@@ -497,6 +507,7 @@ function matchKey(e: KeyboardEvent): (() => void) | null {
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyP") return () => showPalette("commands");
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyF") return () => showPalette("find");
   if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyA") return () => newApiRequest();
+  if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyB") return () => sideLayout.toggle();
   if (e.ctrlKey && !e.altKey && e.key === "Tab" && tabs.length) {
     return () => activate(tabs[(tabs.indexOf(active!) + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length]);
   }
