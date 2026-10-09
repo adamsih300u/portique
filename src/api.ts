@@ -70,6 +70,9 @@ export interface Theme {
   /** Optional: selecting the theme also selects this font. */
   fontFamily?: string;
   fontSize?: number;
+  /** Optional: whole pixels added between cells, and a line-height multiplier, while that font is in use. */
+  letterSpacing?: number;
+  lineHeight?: number;
 }
 
 export interface KeyInfo {

@@ -28,7 +28,8 @@ export const BUILTIN_THEMES: Theme[] = [
   { ...t("sgi-irix", "SGI IRIX", "#0d1b4c", "#f0f0f0", "#ffe066", "#3b4f9a", [
     "#0d1b4c", "#ff5f5f", "#5fe08a", "#ffe066", "#7ea2ff", "#e07fff", "#5fe0e0", "#f0f0f0",
     "#5a6aa6", "#ff8787", "#8affb0", "#fff08a", "#a9c0ff", "#f0a8ff", "#8affff", "#ffffff"]),
-    fontFamily: "'Irix Screen Mono 15', 'Irix Screen Mono 13', Terminus, 'Courier New', monospace", fontSize: 15 },
+    fontFamily: "'Irix Screen Mono 15', 'Irix Screen Mono 13', Terminus, 'Courier New', monospace", fontSize: 15,
+    letterSpacing: 1, lineHeight: 1.1 },
   t("green-phosphor", "Green Phosphor", "#030a03", "#33ff33", "#33ff33", "#0b3d0b", [
     "#030a03", "#1f9f1f", "#33ff33", "#7dff7d", "#22cc22", "#2ee62e", "#1fbf1f", "#33ff33",
     "#0f5f0f", "#2fcf2f", "#66ff66", "#99ff99", "#44dd44", "#55ee55", "#44cc44", "#b6ffb6"]),

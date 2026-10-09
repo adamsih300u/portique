@@ -40,5 +40,6 @@ Style, so a record reads in under a minute:
 | [0006](0006-dev-merged-with-merge-commit.md) | `dev` merges into `main` with a merge commit | accepted |
 | [0007](0007-maintainer-approves-merges.md) | The maintainer approves every merge into `main` and `dev` | accepted |
 | [0008](0008-short-readme.md) | The README stays short and links to `docs/` | accepted |
+| [0009](0009-italic-is-the-apps-voice.md) | Italic is for the app's voice only | accepted |
 
 The same decisions are summarised for agents under *Standing decisions* in [AGENTS.md](../../AGENTS.md).
