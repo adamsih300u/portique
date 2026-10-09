@@ -48,6 +48,8 @@ const sections = (quakeKey: string, quakeOn: boolean): [string, Row[]][] => [
   ["Window", [
     ["Ctrl+Shift+P", "Command palette: hosts, tabs, actions"],
     ["Ctrl+Shift+F", "Find in the terminal's scrollback"],
+    ["Ctrl+Shift+B", "Show / hide the sidebar"],
+    ["Drag sidebar edge", "Resize (double-click resets)"],
     ["F1", "This list"],
     ...(quakeOn ? [[quakeKey, "Show / hide drop-down"]] as Row[] : []),
   ]],

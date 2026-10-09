@@ -19,14 +19,20 @@
 }
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; background: var(--bg); color: var(--text); }
-#app { display: grid; grid-template-columns: calc(250px * var(--s)) 1fr; }
+#app { display: grid; grid-template-columns: var(--side-w, calc(250px * var(--s))) 1fr; }
+#app.side-hidden { grid-template-columns: 0 1fr; }
+#app.side-hidden aside { visibility: hidden; overflow: hidden; border-right-width: 0; }
 button, select, input, textarea { font: inherit; color: inherit; background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 5px 9px; }
 button { cursor: pointer; } button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 button.primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
 button.mini { padding: 0 5px; border: 0; background: none; color: var(--muted); }
 button.mini:hover { color: var(--text); }
-aside { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+aside { position: relative; min-width: 0; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.side-grip { position: absolute; top: 0; right: -3px; bottom: 0; width: 6px; z-index: 5; cursor: col-resize; }
+.side-grip:hover, .side-grip.drag { background: var(--accent); opacity: .6; }
+.side-ruler { position: absolute; visibility: hidden; pointer-events: none; width: max-content; }
+.side-ruler .pname { overflow: visible; flex: none; }
 .side-head { display: flex; gap: 6px; padding: 8px; } .side-head button { flex: 1; padding: 5px 4px; }
 .search { margin: 0 8px 8px; }
 .profiles { overflow: auto; flex: 1; padding-bottom: 12px; }
