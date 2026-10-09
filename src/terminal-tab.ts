@@ -276,6 +276,17 @@ export class TerminalTab {
     if (this.sessionId) void api.resize(this.sessionId, this.term.cols, this.term.rows);
   }
 
+  /**
+   * Once the link is up, put the cursor in the terminal, so a double-click on a profile
+   * needs no extra click. Only when this pane is on screen and nothing else holds focus
+   * (a dialog or another pane the user is typing in keeps it).
+   */
+  private takeFocusIfIdle() {
+    const a = document.activeElement;
+    const idle = !a || a === document.body || a === document.documentElement;
+    if (idle && this.el.offsetParent !== null) this.term.focus();
+  }
+
   focus() {
     this.term.focus();
   }
@@ -437,6 +448,7 @@ export class TerminalTab {
         this.attempt = 0;
         this.setState("connected");
         this.refit();
+        this.takeFocusIfIdle();
         break;
       case "lost":
         if (this.profile.autoReconnect) this.scheduleReconnect("Connection lost");
