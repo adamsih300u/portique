@@ -24,7 +24,7 @@ Portique is a Tauri 2 desktop app (Rust backend, plain TypeScript interface, no 
 
 ```
 src/            interface: main.ts (shell), api.ts (calls into Rust), *-tab.ts (tabs), http-*.ts (API client), editors.ts (dialogs), chrome.ts (looks), styles.css
-src-tauri/src/  backend: lib.rs (commands), session.rs, ssh.rs, tunnel.rs, sftp.rs, telnet.rs, serial.rs, local.rs, http.rs, store.rs, vault.rs, keys.rs, window.rs
+src-tauri/src/  backend: lib.rs (commands), session.rs, ssh.rs, tunnel.rs, sftp.rs, telnet.rs, serial.rs, local.rs, toolbox.rs, http.rs, store.rs, vault.rs, keys.rs, window.rs
 docs/           guides; docs/changes/ has one file per change
 ```
 

@@ -32,6 +32,7 @@ docs/           guides, and one file per change in docs/changes/
 | API client | `api-tab.ts` (the tab), `http-request.ts` (one request), `api-connection.ts` (connection form), `http-model.ts` (types, address and header rules, curl), `http-checks.ts`, `http-import.ts`, `http-transfer.ts`, `http-store.ts`, `http-env.ts`, `http-proxy.ts` |
 | Dialogs: profile editor, keys, themes, settings, vault | `editors.ts`, `settings-ui.ts`, `vault-ui.ts`, `host-prompts.ts` |
 | Building blocks: DOM helper and modal, context menu, command palette | `ui.ts`, `menu.ts`, `palette.ts` |
+| Palette Toolbox: the tool list and dialog (`toolbox.ts`), their logic and tests (`toolbox-core.ts`) | `toolbox.ts`, `toolbox-core.ts` |
 | Looks: interface colours, terminal themes, emblem | `chrome.ts`, `themes.ts`, `emblem.ts` |
 | Everything else | `help.ts` (shortcut panel), `shell-integration.ts`, `window-controls.ts` |
 | All styling | `styles.css` (colours are CSS variables such as `--bg`, `--accent`, `--ok`) |
@@ -45,6 +46,7 @@ docs/           guides, and one file per change in docs/changes/
 | `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells, jump hosts, port forwards, the local SOCKS proxy, SFTP |
 | `telnet.rs`, `serial.rs` | The other two network and serial terminal protocols |
 | `local.rs` | Shells on this computer (cmd, PowerShell, WSL, Linux shells) run on a pseudo-terminal |
+| `toolbox.rs` | The Toolbox's network checks: name lookup, port check, TCP ping, Wake-on-LAN |
 | `http.rs` | The API client's HTTP engine: variables, OAuth, proxy |
 | `store.rs` | Profiles, themes and the config folder |
 | `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys |

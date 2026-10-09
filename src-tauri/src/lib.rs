@@ -7,6 +7,7 @@ mod session;
 mod ssh;
 mod store;
 mod telnet;
+mod toolbox;
 mod tunnel;
 mod vault;
 mod window;
@@ -540,6 +541,36 @@ fn sftp_cancel(id: String, tid: String) {
     sftp::cancel(&id, &tid);
 }
 
+// ---- Toolbox (palette) --------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct ToolPorts {
+    address: String,
+    results: Vec<toolbox::PortResult>,
+}
+
+#[tauri::command]
+async fn tool_dns(name: String) -> Res<Vec<String>> {
+    Ok(toolbox::dns(&name).await.map_err(err)?.iter().map(|ip| ip.to_string()).collect())
+}
+
+#[tauri::command]
+async fn tool_ports(host: String, ports: Vec<u16>) -> Res<ToolPorts> {
+    let (ip, results) = toolbox::check_ports(&host, &ports).await.map_err(err)?;
+    Ok(ToolPorts { address: ip.to_string(), results })
+}
+
+#[tauri::command]
+async fn tool_tcp_ping(host: String, port: u16, count: u32) -> Res<ToolPorts> {
+    let (ip, results) = toolbox::tcp_ping(&host, port, count).await.map_err(err)?;
+    Ok(ToolPorts { address: ip.to_string(), results })
+}
+
+#[tauri::command]
+async fn tool_wake(mac: String, broadcast: String) -> Res<String> {
+    toolbox::wake(&mac, &broadcast).await.map_err(err)
+}
+
 #[tauri::command]
 fn local_home() -> String {
     sftp::local_home()
@@ -596,6 +627,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            tool_dns,
+            tool_ports,
+            tool_tcp_ping,
+            tool_wake,
             vault_status,
             vault_create,
             vault_unlock,
