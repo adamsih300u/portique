@@ -2,7 +2,8 @@
 name = "portique"
 version = "0.1.0"
 description = "Tabbed SSH, Telnet and Serial terminal"
-authors = ["you"]
+authors = ["Adam Pilbeam"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
