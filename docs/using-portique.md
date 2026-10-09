@@ -20,7 +20,7 @@ Everything Portique can do, in one place. For a short introduction see the [READ
 - **Keys**: import in the *Keys* dialog (stored inside the vault) and assign per profile.
 - **Per-profile look**: colour theme, font, size, cursor, scrollback. Build custom themes in *Themes*. A theme can carry its own font: the built-in **SGI IRIX** theme also selects the bundled *Irix Screen Mono* font (CC0, see `THIRD-PARTY-NOTICES.md` in the repository root); the font is applied when you pick the theme and can still be overridden per profile.
 
-Right-click a profile to connect, open it in a split, edit or delete it. Right-click a tab for split/close; Shift+right-click inside a terminal for the same plus copy/paste.
+Right-click a profile to connect, open it in a split, edit, duplicate or delete it. *Duplicate…* opens the editor filled in from the profile (and copies its saved password unless you tick the box). When creating a profile, *Create + Add Another* saves it and reopens the editor with the same settings and a blank name, for entering several similar profiles in a row. Right-click a tab for split/close; Shift+right-click inside a terminal for the same plus copy/paste.
 
 **Splits and workspaces**: every tab can be split into panes (drag the divider to resize, double-click it to even out). The open tabs and layout are restored on the next launch. *gear → Save workspace…* stores the current set of tabs under a name; saved workspaces are listed at the bottom of the sidebar (double-click to open, right-click to rename/delete). Layouts are kept in `workspaces.json` and hold profile ids only.
 

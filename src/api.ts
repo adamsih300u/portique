@@ -251,6 +251,7 @@ export const api = {
   quickProfile: async (profile: Profile) => withDefaults(await guarded(() => invoke<Profile>("quick_profile", { profile }))),
   setPassword: (profileId: string, password: string) =>
     guarded(() => invoke<void>("set_password", { profileId, password })),
+  copyPassword: (fromId: string, toId: string) => guarded(() => invoke<void>("copy_password", { fromId, toId })),
   hasPassword: (profileId: string) => guarded(() => invoke<boolean>("has_password", { profileId })),
   listKeys: () => invoke<KeyInfo[]>("list_keys"),
   importKey: (name: string, pem: string, passphrase?: string) =>

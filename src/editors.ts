@@ -21,11 +21,28 @@ const select = (items: [string | number, string][], current: string | number) =>
 
 // ---------------------------------------------------------------- profile editor
 
-/** Opens the profile editor. Resolves with the saved profile, or null if cancelled. `protocol` preselects the kind for a new one. */
-export async function editProfile(existing: Profile | null, protocol?: Protocol): Promise<Profile | null> {
-  const p: Profile = structuredClone(existing ?? newProfile());
+export interface EditOptions {
+  /** Pre-fills a new profile from this one (a duplicate). Its saved password is copied unless the box is ticked. */
+  template?: Profile;
+  /** Name to start with. Defaults to the template's name, or empty. */
+  name?: string;
+  /** Runs after each profile is saved, so the caller can refresh while "Create + Add Another" keeps the editor going. */
+  onSaved?: (saved: Profile) => void | Promise<void>;
+}
+
+/**
+ * Opens the profile editor. Resolves with the last profile saved, or null if none was.
+ * `protocol` preselects the kind for a new one. A new profile also offers "Create + Add Another",
+ * which saves it and reopens the editor filled from it, with the name cleared.
+ */
+export async function editProfile(existing: Profile | null, protocol?: Protocol, opts: EditOptions = {}): Promise<Profile | null> {
+  const template = existing ? undefined : opts.template;
+  const p: Profile = structuredClone(existing ?? template ?? newProfile());
+  if (template) p.id = "";
   if (!existing && protocol) p.protocol = protocol;
-  const hadPassword = p.id ? await api.hasPassword(p.id).catch(() => false) : false;
+  if (!existing && opts.name !== undefined) p.name = opts.name;
+  const passwordOf = (existing ?? template)?.id;
+  const hadPassword = passwordOf ? await api.hasPassword(passwordOf).catch(() => false) : false;
   const keys = await api.listKeys();
   await loadThemes();
 
@@ -38,7 +55,9 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
   const pass = h("input", {
     type: "password",
     autocomplete: "new-password",
-    placeholder: hadPassword ? "•••••• (saved — leave blank to keep)" : "not saved",
+    placeholder: !hadPassword ? "not saved"
+      : template ? `•••••• (saved on ${template.name || "the original"} — leave blank to copy it)`
+      : "•••••• (saved — leave blank to keep)",
   });
   const clearPass = h("input", { type: "checkbox" });
   const authSel = select(
@@ -223,7 +242,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
   const authField = field("Authentication", authSel);
   const keyField = field("Private key", h("div", { class: "row" }, keySel, manageKeys));
   const passField = field("Password", pass, "Kept in the encrypted vault, never in the profile file.");
-  const clearField = h("label", { class: "check" }, clearPass, " Remove saved password");
+  const clearField = h("label", { class: "check" }, clearPass, template ? " Don't copy the saved password" : " Remove saved password");
   netSection.append(field("Host", host), field("Port", port), jumpField);
   serialSection.append(
     field("Port", serialPort), field("Baud", baud), field("Data bits", dataBits),
@@ -267,7 +286,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
     const needsPw = pr !== "ssh" || authSel.value !== "key";
     passField.hidden = !needsPw;
     clearField.hidden = !needsPw;
-    if (!p.id || Number(port.value) === DEFAULT_PORT[p.protocol]) port.value = String(DEFAULT_PORT[pr] || "");
+    if ((!p.id && !template) || Number(port.value) === DEFAULT_PORT[p.protocol]) port.value = String(DEFAULT_PORT[pr] || "");
     plainWarn.hidden = pr === "ssh" || pr === "api";
     p.protocol = pr;
   };
@@ -286,52 +305,65 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol)
     appearanceBlock,
   );
 
-  let saved: Profile | null = null;
-  await modal(existing ? `Edit ${existing.name}` : "New profile", body, [
+  let saved = null as Profile | null;
+  const save = async () => {
+    if (!name.value.trim()) throw new Error("Name is required");
+    if (p.protocol !== "api" && (p.protocol === "serial" ? !serialPort.value.trim() : !host.value.trim()))
+      throw new Error(p.protocol === "serial" ? "Serial port is required" : "Host is required");
+    const problem = p.protocol === "api" ? apiForm.problem() : null;
+    if (problem) throw new Error(problem);
+    if (p.protocol === "ssh" && authSel.value !== "password" && !keySel.value)
+      throw new Error("Choose a private key (or import one with Manage keys)");
+    const live = p.protocol === "ssh" ? fwds.filter((f) => f.listenPort || f.destHost !== "localhost" || f.destPort) : [];
+    for (const f of live) {
+      if (!f.listenPort || f.listenPort > 65535) throw new Error("Each port forward needs a listening port (1-65535)");
+      if (f.kind !== "dynamic" && (!f.destHost || !f.destPort || f.destPort > 65535))
+        throw new Error("Each port forward needs a destination host and port");
+    }
+    Object.assign(p, {
+      jumpHost: p.protocol === "ssh" ? jumpSel.value || null : null,
+      autoReconnect: autoReconnect.checked,
+      forwards: live,
+      commands: p.protocol === "api" ? [] : sanitizeCommands(cmds),
+      localDir: p.protocol === "ssh" ? localDir.value.trim() : "",
+      remoteDir: p.protocol === "ssh" ? remoteDir.value.trim() : "",
+      name: name.value.trim(), group: group.value.trim(), host: p.protocol === "api" ? apiForm.read().baseUrl : host.value.trim(),
+      api: p.protocol === "api" ? apiForm.read() : p.api,
+      port: Number(port.value) || DEFAULT_PORT[p.protocol], username: user.value,
+      authMethod: authSel.value, keyId: keySel.value || null,
+    });
+    Object.assign(p.serial, {
+      port: serialPort.value.trim(), baud: Number(baud.value) || 9600, dataBits: Number(dataBits.value),
+      parity: parity.value, stopBits: Number(stopBits.value), flow: flow.value,
+    });
+    Object.assign(p.appearance, {
+      themeId: themeSel.value, fontFamily: font.value, fontSize: Number(size.value) || 14,
+      cursorStyle: cursor.value, cursorBlink: blink.checked, ligatures: ligatures.checked, scrollback: Number(scrollback.value) || 0,
+    });
+    const done = await api.saveProfile(p);
+    saved = done;
+    p.id = done.id; // a retry after a later step fails updates this profile instead of adding another
+    if (pass.value) await api.setPassword(done.id, pass.value);
+    else if (clearPass.checked) { if (!template) await api.setPassword(done.id, ""); }
+    else if (template && hadPassword && p.protocol !== "api" && (p.protocol !== "ssh" || p.authMethod !== "key"))
+      await api.copyPassword(template.id, done.id);
+    await opts.onSaved?.(done);
+  };
+  const title = existing ? `Edit ${existing.name}` : template && opts.name !== "" ? `Duplicate ${template.name}` : "New profile";
+  const shown = modal(title, body, existing ? [
     { label: "Cancel" },
-    {
-      label: "Save",
-      primary: true,
-      action: async () => {
-        if (!name.value.trim()) throw new Error("Name is required");
-        if (p.protocol !== "api" && (p.protocol === "serial" ? !serialPort.value.trim() : !host.value.trim()))
-          throw new Error(p.protocol === "serial" ? "Serial port is required" : "Host is required");
-        const problem = p.protocol === "api" ? apiForm.problem() : null;
-        if (problem) throw new Error(problem);
-        if (p.protocol === "ssh" && authSel.value !== "password" && !keySel.value)
-          throw new Error("Choose a private key (or import one with Manage keys)");
-        const live = p.protocol === "ssh" ? fwds.filter((f) => f.listenPort || f.destHost !== "localhost" || f.destPort) : [];
-        for (const f of live) {
-          if (!f.listenPort || f.listenPort > 65535) throw new Error("Each port forward needs a listening port (1-65535)");
-          if (f.kind !== "dynamic" && (!f.destHost || !f.destPort || f.destPort > 65535))
-            throw new Error("Each port forward needs a destination host and port");
-        }
-        Object.assign(p, {
-          jumpHost: p.protocol === "ssh" ? jumpSel.value || null : null,
-          autoReconnect: autoReconnect.checked,
-          forwards: live,
-          commands: p.protocol === "api" ? [] : sanitizeCommands(cmds),
-          localDir: p.protocol === "ssh" ? localDir.value.trim() : "",
-          remoteDir: p.protocol === "ssh" ? remoteDir.value.trim() : "",
-          name: name.value.trim(), group: group.value.trim(), host: p.protocol === "api" ? apiForm.read().baseUrl : host.value.trim(),
-          api: p.protocol === "api" ? apiForm.read() : p.api,
-          port: Number(port.value) || DEFAULT_PORT[p.protocol], username: user.value,
-          authMethod: authSel.value, keyId: keySel.value || null,
-        });
-        Object.assign(p.serial, {
-          port: serialPort.value.trim(), baud: Number(baud.value) || 9600, dataBits: Number(dataBits.value),
-          parity: parity.value, stopBits: Number(stopBits.value), flow: flow.value,
-        });
-        Object.assign(p.appearance, {
-          themeId: themeSel.value, fontFamily: font.value, fontSize: Number(size.value) || 14,
-          cursorStyle: cursor.value, cursorBlink: blink.checked, ligatures: ligatures.checked, scrollback: Number(scrollback.value) || 0,
-        });
-        saved = await api.saveProfile(p);
-        if (clearPass.checked) await api.setPassword(saved.id, "");
-        else if (pass.value) await api.setPassword(saved.id, pass.value);
-      },
-    },
+    { label: "Save", primary: true, action: save },
+  ] : [
+    { label: "Cancel" },
+    { label: "Create + Add Another", action: save },
+    { label: "Create", primary: true, action: save },
   ], true);
+  if (template && opts.name !== "") name.select(); // a duplicate's name is usually retyped
+  const pressed = await shown;
+  if (pressed === "Create + Add Another" && saved) {
+    // Same shape, blank name: the next profile is usually a small variation of this one.
+    return (await editProfile(null, undefined, { ...opts, template: saved, name: "" })) ?? saved;
+  }
   return saved;
 }
 

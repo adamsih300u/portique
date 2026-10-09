@@ -241,6 +241,17 @@ fn set_password(profile_id: String, password: String) -> Res<()> {
     if password.is_empty() { v.delete(&acct) } else { v.set(&acct, &password) }.map_err(err)
 }
 
+/// Copies a saved password to another profile inside Rust, so a duplicate keeps its login
+/// without the interface ever reading the secret. Does nothing if the source has none.
+#[tauri::command]
+fn copy_password(from_id: String, to_id: String) -> Res<()> {
+    let mut v = vault::global();
+    if let Some(pw) = v.get(&vault::password_account(&from_id)).map_err(err)? {
+        v.set(&vault::password_account(&to_id), &pw).map_err(err)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn has_password(profile_id: String) -> Res<bool> {
     vault::global().contains(&vault::password_account(&profile_id)).map_err(err)
@@ -557,6 +568,7 @@ pub fn run() {
             delete_theme,
             quick_profile,
             set_password,
+            copy_password,
             has_password,
             list_keys,
             import_key,
