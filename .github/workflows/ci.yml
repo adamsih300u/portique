@@ -14,10 +14,19 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    uses: ./.github/workflows/changes.yml
+
+  # Skipped (which counts as passing for required checks) when only docs or repo
+  # metadata changed. pr-title below always runs.
   checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/checks.yml
 
   build:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/build.yml
 
   pr-title:

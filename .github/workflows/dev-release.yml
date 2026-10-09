@@ -18,7 +18,14 @@ permissions:
   contents: read
 
 jobs:
+  # A push that only touches docs or repo metadata publishes nothing: version, build and
+  # publish are all skipped, so no prerelease (and no run number) is spent on it.
+  changes:
+    uses: ./.github/workflows/changes.yml
+
   version:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
