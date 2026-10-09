@@ -1,10 +1,10 @@
 import type { Profile } from "./api";
 import { environmentsDialog } from "./http-env";
-import { HttpRequest, toCurl } from "./http-model";
-import { EditorHost, RequestEditor, requestLabel } from "./http-request";
+import { type HttpRequest, toCurl } from "./http-model";
+import { type EditorHost, RequestEditor, requestLabel } from "./http-request";
 import { httpStore } from "./http-store";
 import { exportRequests, importRequests } from "./http-transfer";
-import { contextMenu, MenuEntries, menuOn } from "./menu";
+import { contextMenu, type MenuEntries, menuOn } from "./menu";
 import { h, promptText } from "./ui";
 
 const SHORT: Record<string, string> = { GET: "GET", POST: "POST", PUT: "PUT", PATCH: "PATCH", DELETE: "DEL", HEAD: "HEAD", OPTIONS: "OPT" };

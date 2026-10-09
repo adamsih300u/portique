@@ -1,13 +1,13 @@
-import { api, HttpPayload, HttpResult, Profile } from "./api";
-import { Captured, CheckResult, ResponseView, runCaptures, runChecks } from "./http-checks";
+import { api, type HttpPayload, type HttpResult, type Profile } from "./api";
+import { type Captured, type CheckResult, type ResponseView, runCaptures, runChecks } from "./http-checks";
 import { environmentsDialog } from "./http-env";
 import {
-  ApiSettings, AuthKind, BodyKind, blankRequest, Capture, Check, fmtBytes, fmtMillis, fromCurl, HttpRequest, isAbsoluteUrl, JSON_TOKEN,
-  looksLikeCurl, mergeHeaders, METHODS, Method, Pair, paramsFromUrl, prettyJson, resolveUrl, sanitizeRequest, stripBase, toCurl, withQuery,
+  type ApiSettings, type AuthKind, type BodyKind, blankRequest, type Capture, type Check, fmtBytes, fmtMillis, fromCurl, type HttpRequest, isAbsoluteUrl, JSON_TOKEN,
+  looksLikeCurl, mergeHeaders, METHODS, type Method, type Pair, paramsFromUrl, prettyJson, resolveUrl, sanitizeRequest, stripBase, toCurl, withQuery,
 } from "./http-model";
 import { dropProxy, proxyPort } from "./http-proxy";
 import type { ConnStore } from "./http-store";
-import { MenuEntries, menuOn } from "./menu";
+import { type MenuEntries, menuOn } from "./menu";
 import { h, promptText } from "./ui";
 
 type Section = "params" | "headers" | "auth" | "body" | "after";

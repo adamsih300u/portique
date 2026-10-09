@@ -1,6 +1,6 @@
-import { api, Channel, FileEntry, Listing, Profile, TransferItem } from "./api";
+import { api, Channel, type FileEntry, type Listing, type Profile, type TransferItem } from "./api";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
-import { MenuEntries, menuOn } from "./menu";
+import { type MenuEntries, menuOn } from "./menu";
 import { h, modal, promptText } from "./ui";
 import { ensureUnlocked } from "./vault-ui";
 
@@ -18,7 +18,10 @@ function fmtSize(n: number): string {
   const u = ["KB", "MB", "GB", "TB"];
   let v = n / 1024;
   let i = 0;
-  while (v >= 1024 && i < u.length - 1) (v /= 1024), i++;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
 }
 
@@ -166,7 +169,10 @@ class FilePane {
     const col = (key: "name" | "size" | "mtime", label: string) =>
       h("button", { class: "fm-col" + (this.sortKey === key ? " on" : ""), onclick: () => {
         if (this.sortKey === key) this.sortDir = (this.sortDir * -1) as 1 | -1;
-        else (this.sortKey = key, this.sortDir = 1);
+        else {
+          this.sortKey = key;
+          this.sortDir = 1;
+        }
         this.renderHead();
         this.render();
       } }, label, this.sortKey === key ? h("span", {}, this.sortDir === 1 ? " ▴" : " ▾") : null);

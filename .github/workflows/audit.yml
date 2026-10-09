@@ -1,0 +1,34 @@
+# Known-vulnerability scan of the npm and cargo dependency trees. Advisories appear on their
+# own schedule, so this runs weekly as well as when a lockfile changes. It is not part of CI.yml
+# on purpose: a new advisory should not block an unrelated pull request.
+name: Audit
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [dev]
+    paths: [package-lock.json, src-tauri/Cargo.lock]
+  pull_request:
+    paths: [package-lock.json, src-tauri/Cargo.lock]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm audit --omit=dev --audit-level=high
+
+  cargo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit --file src-tauri/Cargo.lock

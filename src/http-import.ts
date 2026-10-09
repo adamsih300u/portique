@@ -1,6 +1,6 @@
 /** Reading saved requests in from files: our own export, collection files (v2.x), OpenAPI/Swagger JSON, and curl commands. */
 
-import { blankRequest, ConnData, Environment, fromCurl, HttpRequest, looksLikeCurl, Method, METHODS, Pair, parseQuery, sanitizeRequest, withQuery } from "./http-model";
+import { blankRequest, type ConnData, type Environment, fromCurl, type HttpRequest, looksLikeCurl, type Method, METHODS, type Pair, parseQuery, sanitizeRequest, withQuery } from "./http-model";
 
 export const EXPORT_FORMAT = "portique-requests";
 
@@ -17,7 +17,7 @@ export interface Imported {
 }
 
 const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
-const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
+const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
 const join = (...parts: string[]) => parts.map((p) => p.trim()).filter(Boolean).join(" / ");
 
 // ---------------------------------------------------------------- export
@@ -36,6 +36,7 @@ export function exportData(data: ConnData): string {
 
 /** Works out what a file is and reads it. Throws a readable error if it is none of the known kinds. */
 export function parseImport(text: string, fileName = ""): Imported {
+  // eslint-disable-next-line no-irregular-whitespace -- strips a byte-order mark
   const t = text.replace(/^﻿/, "").trim();
   if (!t) throw new Error("The file is empty.");
   if (t.startsWith("{") || t.startsWith("[")) {

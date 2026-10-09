@@ -40,10 +40,10 @@ function steps(path: string): (string | number)[] | null {
 export function jsonField(data: unknown, path: string): { found: boolean; value: unknown } {
   const st = steps(path);
   if (!st) return { found: false, value: undefined };
-  let cur: any = data;
+  let cur: unknown = data;
   for (const s of st) {
     if (cur === null || typeof cur !== "object" || !(s in cur)) return { found: false, value: undefined };
-    cur = cur[s];
+    cur = (cur as Record<string | number, unknown>)[s];
   }
   return { found: true, value: cur };
 }
@@ -55,7 +55,7 @@ export function show(v: unknown): string {
 
 const header = (res: ResponseView, name: string) => res.headers.find(([k]) => k.toLowerCase() === name.trim().toLowerCase())?.[1];
 
-function tryJson(res: ResponseView): unknown | undefined {
+function tryJson(res: ResponseView): unknown {
   try {
     return parseJson(res.body);
   } catch {
@@ -81,7 +81,7 @@ export function describeCheck(c: Check): string {
 }
 
 export function runChecks(checks: Check[], res: ResponseView): CheckResult[] {
-  let json: unknown | undefined;
+  let json: unknown;
   let parsed = false;
   return checks.filter((c) => c.on).map((c) => {
     const label = describeCheck(c);
@@ -125,7 +125,7 @@ export interface Captured {
 }
 
 export function runCaptures(captures: Capture[], res: ResponseView): Captured[] {
-  let json: unknown | undefined;
+  let json: unknown;
   let parsed = false;
   return captures.filter((c) => c.on && c.name.trim()).map((c) => {
     const base = { name: c.name.trim(), secret: c.secret };

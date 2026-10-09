@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
-import { ApiSettings, defaultApiSettings, sanitizeApiSettings } from "./http-model";
+import { type ApiSettings, defaultApiSettings, sanitizeApiSettings } from "./http-model";
 
 export type Protocol = "ssh" | "telnet" | "serial" | "api";
 export type AuthMethod = "password" | "key" | "keyAndPassword";

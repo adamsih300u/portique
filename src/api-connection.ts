@@ -1,5 +1,5 @@
 import type { Profile } from "./api";
-import { ApiSettings, AuthKind, sanitizeApiSettings } from "./http-model";
+import { type ApiSettings, type AuthKind, sanitizeApiSettings } from "./http-model";
 import { pairsTable } from "./http-request";
 import { field, h } from "./ui";
 

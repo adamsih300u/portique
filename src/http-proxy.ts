@@ -1,4 +1,4 @@
-import { api, Channel, Profile } from "./api";
+import { api, Channel, type Profile } from "./api";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
 import { ensureUnlocked } from "./vault-ui";
 

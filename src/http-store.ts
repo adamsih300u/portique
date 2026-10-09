@@ -1,6 +1,6 @@
 import { api, newProfile } from "./api";
 import type { Imported } from "./http-import";
-import { ApiFile, blankRequest, ConnData, defaultApiSettings, Environment, HttpRequest, sanitizeFile } from "./http-model";
+import { type ApiFile, blankRequest, type ConnData, defaultApiSettings, type Environment, type HttpRequest, sanitizeFile } from "./http-model";
 
 /** The saved requests and environments of ONE API connection (a profile of type "api"). */
 export class ConnStore {

@@ -362,7 +362,8 @@ async fn execute(p: Prepared, insecure: bool, follow: bool, timeout_secs: u64, p
 // ---------------------------------------------------------------- OAuth 2.0
 
 /// Cached access tokens: key -> (token type, token, good until). Memory only; never written to disk.
-static TOKENS: Mutex<Option<HashMap<String, (String, String, Instant)>>> = Mutex::new(None);
+type TokenCache = HashMap<String, (String, String, Instant)>;
+static TOKENS: Mutex<Option<TokenCache>> = Mutex::new(None);
 
 fn token_key(o: &OAuth) -> String {
     format!("{}\n{}\n{}\n{}", o.token_url, o.client_id, o.client_secret, o.scope)

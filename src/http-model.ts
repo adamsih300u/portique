@@ -168,7 +168,7 @@ export function blankRequest(): HttpRequest {
 /** Fills in anything missing, so older or hand-edited files never break the UI. */
 export function sanitizeRequest(raw: Partial<HttpRequest> | null | undefined): HttpRequest {
   const b = blankRequest();
-  const r = { ...b, ...(raw ?? {}) } as HttpRequest;
+  const r = { ...b, ...(raw ?? {}) };
   return {
     id: String(r.id || b.id),
     name: String(r.name ?? ""),
@@ -184,14 +184,14 @@ export function sanitizeRequest(raw: Partial<HttpRequest> | null | undefined): H
     auth: sanitizeAuth(r.auth, "inherit"),
     checks: (Array.isArray(r.checks) ? r.checks : []).filter((c) => c && typeof c === "object").map((c) => ({
       on: c.on !== false,
-      source: (["status", "header", "json", "body"].includes(c.source) ? c.source : "status") as Check["source"],
+      source: (["status", "header", "json", "body"].includes(c.source) ? c.source : "status"),
       path: String(c.path ?? ""),
-      op: (["is", "isnt", "contains", "exists", "lt", "gt"].includes(c.op) ? c.op : "is") as Check["op"],
+      op: (["is", "isnt", "contains", "exists", "lt", "gt"].includes(c.op) ? c.op : "is"),
       value: String(c.value ?? ""),
     })),
     captures: (Array.isArray(r.captures) ? r.captures : []).filter((c) => c && typeof c === "object").map((c) => ({
       on: c.on !== false,
-      source: (c.source === "header" ? "header" : "json") as Capture["source"],
+      source: (c.source === "header" ? "header" : "json"),
       path: String(c.path ?? ""),
       name: String(c.name ?? ""),
       secret: c.secret === true,
@@ -219,7 +219,7 @@ export function sanitizeConn(raw: unknown): ConnData {
  * requests and environments): the caller moves it into a connection of its own.
  */
 export function sanitizeFile(raw: unknown): { file: ApiFile; legacy: ConnData | null } {
-  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const connections: Record<string, ConnData> = {};
   if (o.connections && typeof o.connections === "object") {
     for (const [id, c] of Object.entries(o.connections)) connections[id] = sanitizeConn(c);
@@ -476,7 +476,10 @@ export function fmtBytes(n: number): string {
   const u = ["KB", "MB", "GB"];
   let v = n / 1024;
   let i = 0;
-  while (v >= 1024 && i < u.length - 1) (v /= 1024), i++;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
 }
 

@@ -1,5 +1,5 @@
-import { IMarker, Terminal } from "@xterm/xterm";
-import { ClipboardAddon, IClipboardProvider } from "@xterm/addon-clipboard";
+import { type IMarker, Terminal } from "@xterm/xterm";
+import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
@@ -7,7 +7,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { api, Channel, Profile } from "./api";
+import { api, Channel, type Profile } from "./api";
 import { getTheme, xtermTheme } from "./themes";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
 import { toBytes } from "./ui";

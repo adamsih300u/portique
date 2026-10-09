@@ -2,7 +2,7 @@
 // Rust crates come from `cargo tree` for the Linux and Windows targets (normal dependencies only),
 // npm packages from the production entries of package-lock.json. Run `npm run licenses` after changing dependencies.
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 

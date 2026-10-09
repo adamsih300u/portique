@@ -1,5 +1,5 @@
 import { api } from "./api";
-import { Environment, EnvVar } from "./http-model";
+import { type Environment, type EnvVar } from "./http-model";
 import type { ConnStore } from "./http-store";
 import { h, modal } from "./ui";
 
@@ -37,7 +37,7 @@ export async function environmentsDialog(store: ConnStore, selectId = ""): Promi
     drafts.push(d);
     current = d;
     render();
-    (editor.querySelector(".env-name") as HTMLInputElement | null)?.select();
+    editor.querySelector<HTMLInputElement>(".env-name")?.select();
   };
 
   const render = () => {
