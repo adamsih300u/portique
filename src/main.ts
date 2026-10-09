@@ -363,14 +363,39 @@ function dragReorder(t: AnyTab) {
     if (!moved || moved === t) return;
     e.preventDefault();
     tabs.splice(tabs.indexOf(moved), 1);
-    const at = tabs.indexOf(t) + (side(e) === "after" ? 1 : 0);
-    tabs.splice(at, 0, moved);
-    const next = tabs[at + 1];
-    tabBar.insertBefore(moved.header, next ? next.header : tabBar.querySelector(".tab-drag"));
-    renumber();
-    persist();
+    moveTab(moved, tabs.indexOf(t) + (side(e) === "after" ? 1 : 0));
   });
 }
+
+/** Puts a tab (already taken out of `tabs`) at an index, in the array and in the tab bar. */
+function moveTab(moved: AnyTab, at: number) {
+  tabs.splice(at, 0, moved);
+  const next = tabs[at + 1];
+  tabBar.insertBefore(moved.header, next ? next.header : tabBar.querySelector(".tab-drag"));
+  renumber();
+  persist();
+}
+
+// The empty part of the tab bar, after the last tab, is a drop target for "move to the end".
+const lastTab = () => tabs[tabs.length - 1];
+const inGap = (e: DragEvent) => !!dragging && !(e.target as HTMLElement).closest(".tab");
+tabBar.addEventListener("dragover", (e) => {
+  if (!inGap(e)) return;
+  e.preventDefault();
+  lastTab()?.header.classList.toggle("drop-after", dragging !== lastTab());
+});
+tabBar.addEventListener("dragleave", (e) => {
+  if (e.target === tabBar || !(e.target as HTMLElement).closest(".tab")) lastTab()?.header.classList.remove("drop-after");
+});
+tabBar.addEventListener("drop", (e) => {
+  if (!inGap(e)) return;
+  e.preventDefault();
+  const moved = dragging;
+  lastTab()?.header.classList.remove("drop-after");
+  if (!moved || moved === lastTab()) return;
+  tabs.splice(tabs.indexOf(moved), 1);
+  moveTab(moved, tabs.length);
+});
 
 async function renameTab(tab: Tab) {
   const name = await promptText("Rename tab", "Name", tab.title);
