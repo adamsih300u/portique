@@ -48,11 +48,18 @@ function paintRegion(el: Element | null, bg: string, content = false) {
   s.setProperty("color-scheme", light ? "light" : "dark");
 }
 
+/** With no explicit content colour, the main area (empty screen, file browser) follows the sidebar instead of staying stock navy. */
+const contentFor = (side: string) => {
+  if (!side) return "";
+  const to = isLight(side) ? 1 : 0, k = isLight(side) ? 0.55 : 0.25;
+  return "#" + rgb(side).map((c) => Math.round((c + (to - c) * k) * 255).toString(16).padStart(2, "0")).join("");
+};
+
 /** Applies interface colours to the live document. */
 export function applyChrome(ui: UiColours) {
   document.documentElement.classList.toggle("plain-tabs", ui.plainTabs);
   paintRegion(document.querySelector("aside"), ui.side);
-  paintRegion(document.querySelector("main"), ui.content, true);
+  paintRegion(document.querySelector("main"), ui.content || contentFor(ui.side), true);
   paintRegion(document.querySelector(".tabbar"), ui.top);
   const root = document.documentElement.style;
   if (!ui.accent) return ["--accent", "--accent-hi", "--on-accent"].forEach((p) => root.removeProperty(p));
