@@ -243,6 +243,8 @@ export const api = {
   listThemes: () => invoke<Theme[]>("list_themes"),
   saveTheme: (theme: Theme) => invoke<Theme>("save_theme", { theme }),
   deleteTheme: (id: string) => invoke<void>("delete_theme", { id }),
+  /** Registers a host typed into quick connect; the result has an id but is never saved to disk. */
+  quickProfile: (profile: Profile) => guarded(() => invoke<Profile>("quick_profile", { profile })),
   setPassword: (profileId: string, password: string) =>
     guarded(() => invoke<void>("set_password", { profileId, password })),
   hasPassword: (profileId: string) => guarded(() => invoke<boolean>("has_password", { profileId })),
