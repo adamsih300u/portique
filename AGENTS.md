@@ -67,6 +67,7 @@ Decisions that still bind new work. Each links to where it was made.
 - Sending through an SSH host uses a **local SOCKS5 proxy** over the existing forwarder, with names resolved on the server. → [api-roadmap](docs/changes/api-roadmap.md)
 - **Outside terminals the interface follows the interface look**, never a terminal theme; meaningful colours are the `--ok/--warn/--danger/--info` family. → [api-roadmap](docs/changes/api-roadmap.md)
 - **Pushes to `dev` publish `vX.Y.Z-dev.N` prereleases**; `dev` is merged into `main` with a **merge commit**, never squashed, so the next version can be predicted. → [dev-prereleases](docs/changes/dev-prereleases.md)
+- **Nothing merges into `main` or `dev` without the maintainer's approval.** Agents never merge, approve, or edit the protection rules. → [merge-approval](docs/changes/merge-approval.md)
 - **The README is short.** Detail goes in `docs/`; long PR descriptions go in `docs/changes/`. → [repo-guides](docs/changes/repo-guides.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.
