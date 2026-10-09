@@ -1,7 +1,7 @@
 # Skip builds when only docs or repo metadata changed
 
 - **Branch:** `ci/skip-docs-builds`
-- **PR:** <link, once open>
+- **PR:** https://github.com/adamsih300u/portique/pull/18
 - **Status:** draft
 - **Author:** Claude
 
