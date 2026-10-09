@@ -197,5 +197,5 @@ impl AutoLogin {
 pub fn saved_password(p: &Profile, override_pw: &Option<String>) -> Option<String> {
     override_pw
         .clone()
-        .or_else(|| crate::vault::global().get(&crate::vault::password_account(&p.id)).ok().flatten())
+        .or_else(|| crate::vault::global().get(&crate::vault::password_account(&p.id)).ok().flatten().map(|v| (*v).clone()))
 }

@@ -32,8 +32,8 @@ pub fn load(id: &str, passphrase: Option<&str>) -> Result<PrivateKey> {
         let mut v = vault::global();
         (v.get(&vault::key_account(id))?, v.get(&vault::passphrase_account(id))?)
     };
-    let pem = Zeroizing::new(pem.context("key not found in vault")?);
-    let pass = passphrase.or(saved.as_deref());
+    let pem = pem.context("key not found in vault")?;
+    let pass = passphrase.or(saved.as_ref().map(|s| s.as_str()));
     decode_secret_key(&pem, pass).map_err(|e| anyhow::anyhow!("cannot unlock key: {e}"))
 }
 

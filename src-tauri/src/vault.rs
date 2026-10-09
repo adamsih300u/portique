@@ -7,6 +7,8 @@
 //! The payload also carries a `generation` that rises with every save. Each computer records the
 //! highest one it has opened in a small file outside the portable set (`vault.seen`), so a
 //! restored older `vault.bin` is noticed instead of silently decrypting.
+//! While unlocked, each secret is kept sealed in memory under a random per-unlock key and is
+//! opened one at a time, for as long as it is being used, then zeroized.
 //! Only symmetric primitives are used, so there is nothing for Shor's algorithm to break;
 //! Grover's algorithm leaves a 256-bit key with ~128 bits of strength.
 
@@ -126,11 +128,79 @@ impl Drop for Data {
     }
 }
 
+/// The secrets while the vault is unlocked: every value is sealed (XChaCha20-Poly1305, fresh
+/// nonce, the secret's name as associated data) under `shield`, a random key made at unlock that
+/// never touches disk. Only the secret being used is ever plain text, and only briefly.
+struct Secrets {
+    shield: Zeroizing<[u8; 32]>,
+    /// name -> nonce followed by ciphertext.
+    items: HashMap<String, Vec<u8>>,
+}
+
+impl Secrets {
+    fn new() -> Result<Self> {
+        let mut shield = Zeroizing::new([0u8; 32]);
+        getrandom::fill(&mut *shield).map_err(|e| anyhow!("no randomness available: {e}"))?;
+        Ok(Self { shield, items: HashMap::new() })
+    }
+
+    /// Seals every value of `data`; the plain copies are zeroized when `data` drops.
+    fn from_data(mut data: Data) -> Result<Self> {
+        let mut me = Self::new()?;
+        for (name, mut value) in data.secrets.drain() {
+            let sealed = me.insert(&name, &value);
+            value.zeroize();
+            sealed?;
+        }
+        Ok(me)
+    }
+
+    fn insert(&mut self, name: &str, value: &str) -> Result<()> {
+        let nonce = XNonce::generate();
+        let ct = XChaCha20Poly1305::new((&*self.shield).into())
+            .encrypt(&nonce, Payload { msg: value.as_bytes(), aad: name.as_bytes() })
+            .map_err(|_| anyhow!("encryption failed"))?;
+        let mut blob = nonce.to_vec();
+        blob.extend(ct);
+        self.items.insert(name.to_string(), blob);
+        Ok(())
+    }
+
+    /// Opens one secret. The caller holds the only plain copy and it is zeroized on drop.
+    fn open(&self, name: &str) -> Result<Option<Zeroizing<String>>> {
+        let Some(blob) = self.items.get(name) else { return Ok(None) };
+        let corrupt = || anyhow!("a secret held in memory is corrupt");
+        if blob.len() < 24 {
+            return Err(corrupt());
+        }
+        let (nonce, ct) = blob.split_at(24);
+        let nonce = XNonce::try_from(nonce).map_err(|_| corrupt())?;
+        let plain = Zeroizing::new(
+            XChaCha20Poly1305::new((&*self.shield).into())
+                .decrypt(&nonce, Payload { msg: ct, aad: name.as_bytes() })
+                .map_err(|_| corrupt())?,
+        );
+        Ok(Some(Zeroizing::new(String::from_utf8(plain.to_vec()).map_err(|_| corrupt())?)))
+    }
+
+    /// Every secret in plain text, for writing the file. Short-lived: it zeroizes on drop.
+    fn to_data(&self, generation: u64) -> Result<Data> {
+        let mut data = Data { secrets: HashMap::new(), generation };
+        for name in self.items.keys() {
+            if let Some(v) = self.open(name)? {
+                data.secrets.insert(name.clone(), (*v).clone());
+            }
+        }
+        Ok(data)
+    }
+}
+
 struct Unlocked {
     key: Zeroizing<[u8; 32]>,
     kdf: Kdf,
     salt: Vec<u8>,
-    data: Data,
+    secrets: Secrets,
+    generation: u64,
     last_used: Instant,
 }
 
@@ -192,10 +262,10 @@ impl Vault {
         let mut salt = vec![0u8; 16];
         getrandom::fill(&mut salt).map_err(|e| anyhow!("no randomness available: {e}"))?;
         let key = derive(password, &salt, &kdf)?;
-        self.state = Some(Unlocked { key, kdf, salt, data: Data::default(), last_used: Instant::now() });
+        self.state = Some(Unlocked { key, kdf, salt, secrets: Secrets::new()?, generation: 0, last_used: Instant::now() });
         self.save()?;
         // A new vault starts a new history, whatever an earlier one left behind.
-        let generation = self.unlocked()?.data.generation;
+        let generation = self.unlocked()?.generation;
         self.record_seen(generation);
         Ok(())
     }
@@ -225,14 +295,15 @@ impl Vault {
                 .map_err(|_| anyhow!("wrong master password (or the vault file was modified)"))?,
         );
         let data: Data = serde_json::from_slice(&plain).context("vault contents are corrupt")?;
-        Ok(Unlocked { key, kdf: env.kdf, salt, data, last_used: Instant::now() })
+        let generation = data.generation;
+        Ok(Unlocked { key, kdf: env.kdf, salt, secrets: Secrets::from_data(data)?, generation, last_used: Instant::now() })
     }
 
     /// Opens the vault. A file whose generation is below the last one this computer opened was
     /// probably restored from an older copy; that fails with `OLDER_MSG` unless `accept_older`.
     pub fn unlock(&mut self, password: &str, accept_older: bool) -> Result<()> {
         let st = self.read(password)?;
-        let (found, seen) = (st.data.generation, self.last_seen());
+        let (found, seen) = (st.generation, self.last_seen());
         if found < seen && !accept_older {
             bail!(
                 "{OLDER_MSG} the last one opened on this computer (saved {found} times, was {seen}). \
@@ -289,22 +360,22 @@ impl Vault {
         false
     }
 
-    pub fn get(&mut self, name: &str) -> Result<Option<String>> {
-        Ok(self.unlocked()?.data.secrets.get(name).cloned())
+    /// Opens one secret; the returned copy zeroizes itself when dropped.
+    pub fn get(&mut self, name: &str) -> Result<Option<Zeroizing<String>>> {
+        self.unlocked()?.secrets.open(name)
     }
 
     pub fn contains(&mut self, name: &str) -> Result<bool> {
-        Ok(self.unlocked()?.data.secrets.contains_key(name))
+        Ok(self.unlocked()?.secrets.items.contains_key(name))
     }
 
     pub fn set(&mut self, name: &str, value: &str) -> Result<()> {
-        self.unlocked()?.data.secrets.insert(name.to_string(), value.to_string());
+        self.unlocked()?.secrets.insert(name, value)?;
         self.save()
     }
 
     pub fn delete(&mut self, name: &str) -> Result<()> {
-        if let Some(mut v) = self.unlocked()?.data.secrets.remove(name) {
-            v.zeroize();
+        if self.unlocked()?.secrets.items.remove(name).is_some() {
             self.save()?;
         }
         Ok(())
@@ -312,11 +383,11 @@ impl Vault {
 
     fn save(&mut self) -> Result<()> {
         let st = self.state.as_mut().ok_or_else(|| anyhow!(LOCKED_MSG))?;
-        st.data.generation += 1;
+        st.generation += 1;
         let result = self.write_file();
         if result.is_err() {
             if let Some(st) = self.state.as_mut() {
-                st.data.generation -= 1;
+                st.generation -= 1;
             }
         }
         result
@@ -324,7 +395,7 @@ impl Vault {
 
     fn write_file(&self) -> Result<()> {
         let st = self.state.as_ref().ok_or_else(|| anyhow!(LOCKED_MSG))?;
-        let plain = Zeroizing::new(serde_json::to_vec(&st.data)?);
+        let plain = Zeroizing::new(serde_json::to_vec(&st.secrets.to_data(st.generation)?)?);
         let nonce = XNonce::generate();
         let aad = Envelope::aad(VERSION, &st.kdf, &st.salt);
         let ct = XChaCha20Poly1305::new((&*st.key).into())
@@ -346,7 +417,7 @@ impl Vault {
             std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
         }
         std::fs::rename(&tmp, &self.path)?;
-        self.record_seen(st.data.generation);
+        self.record_seen(st.generation);
         Ok(())
     }
 }
@@ -405,7 +476,7 @@ mod tests {
         assert_eq!(v.get("a").unwrap_err().to_string(), LOCKED_MSG);
         let mut v2 = again(&d);
         v2.unlock(PW, false).unwrap();
-        assert_eq!(v2.get("a").unwrap().as_deref(), Some("s3cret"));
+        assert_eq!(v2.get("a").unwrap().as_ref().map(|v| v.as_str()), Some("s3cret"));
     }
 
     #[test]
@@ -517,6 +588,77 @@ mod tests {
         assert!(v.contains("a").unwrap());
     }
 
+    fn sealed(v: &Vault) -> &Secrets {
+        &v.state.as_ref().unwrap().secrets
+    }
+
+    #[test]
+    fn secrets_are_sealed_in_memory() {
+        let (_d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        v.set("acct", "UNIQUE-PLAINTEXT-MARKER").unwrap();
+        let marker = b"UNIQUE-PLAINTEXT-MARKER";
+        assert!(!sealed(&v).items["acct"].windows(marker.len()).any(|w| w == marker));
+        assert_eq!(&**v.get("acct").unwrap().unwrap(), "UNIQUE-PLAINTEXT-MARKER");
+        // Reopening from disk seals again.
+        v.lock();
+        v.unlock(PW, false).unwrap();
+        assert!(!sealed(&v).items["acct"].windows(marker.len()).any(|w| w == marker));
+        assert_eq!(&**v.get("acct").unwrap().unwrap(), "UNIQUE-PLAINTEXT-MARKER");
+    }
+
+    #[test]
+    fn a_sealed_secret_is_bound_to_its_name() {
+        let (_d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        v.set("a", "first").unwrap();
+        v.set("b", "second").unwrap();
+        let st = v.state.as_mut().unwrap();
+        let (a, b) = (st.secrets.items["a"].clone(), st.secrets.items["b"].clone());
+        st.secrets.items.insert("a".into(), b);
+        st.secrets.items.insert("b".into(), a);
+        assert!(v.get("a").is_err() && v.get("b").is_err());
+    }
+
+    #[test]
+    fn a_damaged_sealed_secret_is_an_error_not_garbage() {
+        let (_d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        v.set("a", "first").unwrap();
+        v.state.as_mut().unwrap().secrets.items.get_mut("a").unwrap().truncate(10);
+        assert!(v.get("a").is_err());
+    }
+
+    #[test]
+    fn each_unlock_uses_a_fresh_shield_and_a_password_change_keeps_secrets() {
+        let (_d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        v.set("a", "first").unwrap();
+        let shield = *sealed(&v).shield;
+        v.lock();
+        v.unlock(PW, false).unwrap();
+        assert_ne!(shield, *sealed(&v).shield);
+        let blob = sealed(&v).items["a"].clone();
+        v.change_password(PW, PW2).unwrap();
+        assert_eq!(sealed(&v).items["a"], blob, "a password change should not touch sealed secrets");
+        assert_eq!(&**v.get("a").unwrap().unwrap(), "first");
+    }
+
+    #[test]
+    fn overwriting_and_deleting_secrets_persist() {
+        let (d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        v.set("a", "1").unwrap();
+        v.set("a", "2").unwrap();
+        v.set("b", "3").unwrap();
+        v.delete("b").unwrap();
+        v.lock();
+        let mut w = again(&d);
+        w.unlock(PW, false).unwrap();
+        assert_eq!(&**w.get("a").unwrap().unwrap(), "2");
+        assert!(w.get("b").unwrap().is_none() && !w.contains("b").unwrap());
+    }
+
     #[test]
     fn weak_passwords_are_refused_with_advice() {
         let (_d, mut v) = vault();
@@ -575,7 +717,7 @@ mod tests {
         let mut v2 = again(&d);
         assert!(v2.unlock(PW, false).is_err());
         v2.unlock(PW2, false).unwrap();
-        assert_eq!(v2.get("a").unwrap().as_deref(), Some("b"));
+        assert_eq!(v2.get("a").unwrap().as_ref().map(|v| v.as_str()), Some("b"));
     }
 
     #[test]

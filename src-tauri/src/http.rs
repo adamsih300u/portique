@@ -112,7 +112,8 @@ impl Expander<'_> {
         if self.req.env_id.is_empty() {
             return Ok(None);
         }
-        vault::global().get(&secret_account(&self.req.env_id, name))
+        // The request body needs the plain value; this copy leaves the vault's control here.
+        Ok(vault::global().get(&secret_account(&self.req.env_id, name))?.map(|v| (*v).clone()))
     }
 
     /// Replaces every `{{name}}`. Names that aren't defined are collected in `missing` and left in place.
