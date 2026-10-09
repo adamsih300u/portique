@@ -27,7 +27,7 @@ Start with `scripts/release-version.mjs` and its test, then `dev-release.yml`.
 
 ## What was tested
 
-`node --test scripts/` passes; the version script prints `0.1.1` for this repo; the stamp changes exactly the three version lines; the prune filter was run on sample JSON; the workflow files parse as YAML. **Not run:** the workflows themselves (they need a push to `dev`), the Windows build with a `-dev.N` version, the `.deb` build with a hyphenated version, and release-please against `dev`.
+`node --test scripts/release-version.test.mjs` passes (the first CI run showed that Node 22 reads a bare directory argument as a module, so the file is named explicitly); the version script prints `0.1.1` for this repo; the stamp changes exactly the three version lines; the prune filter was run on sample JSON; the workflow files parse as YAML. **Not run:** the workflows themselves (they need a push to `dev`), the Windows build with a `-dev.N` version, the `.deb` build with a hyphenated version, and release-please against `dev`.
 
 ## Not done / follow-ups
 
