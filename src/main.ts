@@ -16,6 +16,7 @@ import { ensureFont, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
 import { type FindTarget, openPalette, type PaletteItem } from "./palette";
+import { serverTools } from "./server-tools";
 import { openTool, TOOLS } from "./toolbox";
 import { fillPlaceholders, placeholders, type SavedCommand } from "./saved-commands";
 import { isQuick, parseQuickTarget, type QuickTarget, quickLabel, quickProfileFor } from "./quick-connect";
@@ -563,6 +564,12 @@ function paletteItems(): PaletteItem[] {
     if (term.connected)
       for (const c of term.profile.commands)
         add(`${term.profile.name} commands`, `cmd:${term.profile.id}:${c.id}`, c.name, () => void runSavedCommand(term, c), { subtitle: c.text.split("\n")[0], keywords: c.text });
+    // Tools that run on this host: one row to browse them, every tool when typing. They use the open connection.
+    if (term.session && term.profile.protocol === "ssh") {
+      add("Server", "server-tools", "Server tools…", () => showPalette("commands", "Server "), { only: "browse", subtitle: `facts, processes and disk use on ${term.profile.name}`, keywords: "host machine" });
+      for (const t of serverTools({ name: term.profile.name, session: () => term.session }))
+        add("Server", `server:${term.profile.id}:${t.id}`, t.title, () => void openTool(t), { only: "search", subtitle: t.hint, keywords: t.keywords });
+    }
     if (tab.focused.profile.protocol === "ssh") add("This tab", "files-here", "Open file browser for this host", () => openFiles(tab.focused.profile), { keywords: "sftp" });
   }
   if (active) add("This tab", "close-tab", "Close tab", () => closeTab(active!));

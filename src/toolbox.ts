@@ -8,6 +8,8 @@ import { field, h, modal, type ModalButton } from "./ui";
 export interface Tool {
   id: string;
   title: string;
+  /** The dialog's title, when it should say more than the palette row does (which server, say). */
+  heading?: string;
   /** One line shown beside the title in the palette. */
   hint: string;
   /** Extra words that find it. */
@@ -183,7 +185,7 @@ export async function openTool(tool: Tool) {
     ...(tool.again ? [{ label: tool.again, action: () => (void exec(), false as const) }] : []),
     ...(tool.live || !tool.input ? [{ label: "Copy", primary: true, action: copy }] : []),
   ];
-  const shown = modal(tool.title.replace(/…$/, ""), body, buttons, true);
+  const shown = modal(tool.heading ?? tool.title.replace(/…$/, ""), body, buttons, true);
   // The modal focuses its first field itself. With none, focus the main button so Esc and Enter work.
   if (!input) document.querySelector<HTMLElement>(".overlay .modal-buttons .primary")?.focus();
   if (!asked || tool.live) void exec();

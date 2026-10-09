@@ -42,5 +42,6 @@ Style, so a record reads in under a minute:
 | [0008](0008-short-readme.md) | The README stays short and links to `docs/` | accepted |
 | [0009](0009-italic-is-the-apps-voice.md) | Italic is for the app's voice only | accepted |
 | [0010](0010-local-shells-start-by-id.md) | A local terminal starts from a detected shell, by id | accepted |
+| [0011](0011-server-commands-run-beside-the-shell.md) | Server commands run on a new channel of the open shell's connection | accepted |
 
 The same decisions are summarised for agents under *Standing decisions* in [AGENTS.md](../../AGENTS.md).

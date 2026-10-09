@@ -33,6 +33,7 @@ docs/           guides, and one file per change in docs/changes/
 | Dialogs: profile editor, keys, themes, settings, vault | `editors.ts`, `settings-ui.ts`, `vault-ui.ts`, `host-prompts.ts` |
 | Building blocks: DOM helper and modal, context menu, command palette | `ui.ts`, `menu.ts`, `palette.ts` |
 | Palette Toolbox: the tool list and dialog (`toolbox.ts`), their logic and tests (`toolbox-core.ts`) | `toolbox.ts`, `toolbox-core.ts` |
+| Palette server tools: commands run on the connected host (facts, processes, disk use) and their readers | `server-tools.ts`, `server-tools-core.ts` |
 | Looks: interface colours, terminal themes, emblem | `chrome.ts`, `themes.ts`, `emblem.ts` |
 | Everything else | `help.ts` (shortcut panel), `shell-integration.ts`, `window-controls.ts` |
 | All styling | `styles.css` (colours are CSS variables such as `--bg`, `--accent`, `--ok`) |
@@ -43,7 +44,7 @@ docs/           guides, and one file per change in docs/changes/
 |---|---|
 | `lib.rs` | Registers the Tauri commands the interface can call, and app start-up |
 | `session.rs` | Running sessions and the frames they stream to the interface |
-| `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells, jump hosts, port forwards, the local SOCKS proxy, SFTP |
+| `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells (and one-off commands beside them), jump hosts, port forwards, the local SOCKS proxy, SFTP |
 | `telnet.rs`, `serial.rs` | The other two network and serial terminal protocols |
 | `local.rs` | Shells on this computer (cmd, PowerShell, WSL, Linux shells) run on a pseudo-terminal |
 | `toolbox.rs` | The Toolbox's network checks: name lookup, port check, TCP ping, Wake-on-LAN |
