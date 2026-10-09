@@ -1,12 +1,14 @@
-# Number and rename terminal tabs
+# Number, rename and reorder tabs
 
-Tabs on the same profile are now numbered (`prod 1`, `prod 2`, …), and any terminal tab can be renamed from its right-click menu. Names survive restarts and saved workspaces.
+Tabs on the same profile are now numbered (`prod 1`, `prod 2`, …), and any terminal tab can be renamed from its right-click menu. Tabs can be dragged into a new order. Names survive restarts and saved workspaces.
 
 ## What changed
 
 - Terminal tabs that share a profile show `name 1`, `name 2`, … in tab order. A lone tab keeps its plain name. Closing a tab renumbers the rest.
 - Right-click a tab → **Rename tab…**; **Reset tab name** appears once a tab has a custom name.
 - The custom name is stored as `n` on the tab's root layout node, so both the restored window and named workspaces carry it. Older saved data has no `n` and loads unchanged.
+
+- Drag a tab header left or right; a bar shows where it will land. Terminal-tab order is saved with the window and workspaces, and numbering follows the new order.
 
 ## Decisions
 

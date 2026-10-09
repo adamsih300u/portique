@@ -38,6 +38,9 @@ aside { background: var(--panel); border-right: 1px solid var(--line); display: 
 main { background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 .tabbar { display: flex; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; min-height: 33px; }
 .tab { --tab-bg: var(--panel2); --tab-accent: var(--accent); display: flex; align-items: center; gap: 7px; padding: 0 8px 0 12px; border-right: 1px solid var(--line); border-top: 2px solid transparent; cursor: pointer; white-space: nowrap; color: var(--muted); }
+.tab.dragging { opacity: .45; }
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
 .tab.active { background: var(--tab-bg); border-top-color: var(--tab-accent); color: var(--text); }
 .status { width: 8px; height: 8px; border-radius: 50%; background: #888; }
 .status.connected { background: #3fb950; } .status.connecting { background: #d29922; } .status.disconnected { background: var(--danger); }
