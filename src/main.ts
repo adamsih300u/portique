@@ -223,11 +223,25 @@ function addTab(layout: Layout): Tab | null {
   t.header.addEventListener("contextmenu", (e) => menuOn(e, tabMenu(t)));
   t.closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
   t.onChange = persist;
+  t.onRetitle = renumber;
   t.onPaneMenu = (e) => menuOn(e, paneMenu(t));
   tabs.push(t);
   tabBar.append(t.header);
   stage.append(t.el);
+  renumber();
   return t;
+}
+
+/** Terminal tabs on the same profile are numbered 1, 2, 3… in tab order; a lone tab keeps its plain name. */
+function renumber() {
+  const groups = new Map<string, Tab[]>();
+  for (const t of tabs) if (t instanceof Tab) groups.set(t.focused.profile.id, [...(groups.get(t.focused.profile.id) ?? []), t]);
+  for (const g of groups.values()) g.forEach((t, i) => t.setOrdinal(g.length > 1 ? i + 1 : 0));
+}
+
+async function renameTab(tab: Tab) {
+  const name = await promptText("Rename tab", "Name", tab.title);
+  if (name) tab.rename(name);
 }
 
 const LAST_API = "portique.api.last";
@@ -292,6 +306,7 @@ function closeTab(tab: AnyTab) {
   const i = tabs.indexOf(tab);
   tabs.splice(i, 1);
   tab.dispose();
+  renumber();
   activate(active === tab ? (tabs[Math.min(i, tabs.length - 1)] ?? null) : active);
 }
 
@@ -308,6 +323,9 @@ function tabMenu(tab: AnyTab): MenuEntries {
     ...(tab.focused.profile.protocol === "ssh" ? [{ label: "Open file browser for this host", action: () => openFiles(tab.focused.profile) }, null] : []),
     { label: "Split right", hint: "Ctrl+Shift+D", action: on(() => tab.split("row")) },
     { label: "Split down", hint: "Ctrl+Shift+E", action: on(() => tab.split("col")) },
+    null,
+    { label: "Rename tab…", action: () => void renameTab(tab) },
+    ...(tab.customName ? [{ label: "Reset tab name", action: () => tab.rename(null) }] : []),
     null,
     ...(tab.paneCount > 1 ? [{ label: "Close pane", hint: "Ctrl+Shift+W", action: on(() => closePane(tab)) }] : []),
     { label: "Close tab", action: () => closeTab(tab) },
