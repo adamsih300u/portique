@@ -338,6 +338,9 @@ function activate(tab: AnyTab | null) {
   persist();
 }
 
+// Coming back to the window clears the flag on the tab in front of you.
+window.addEventListener("focus", () => active?.header.classList.remove("unread"));
+
 function closeTab(tab: AnyTab) {
   if (tab instanceof ApiTab && !tab.confirmClose()) return;
   const i = tabs.indexOf(tab);

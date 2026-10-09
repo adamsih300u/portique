@@ -71,5 +71,6 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - **Pushes to `dev` publish `vX.Y.Z-dev.N` prereleases**; `dev` is merged into `main` with a **merge commit**, never squashed, so the next version can be predicted. → [ADR-0006](docs/adr/0006-dev-merged-with-merge-commit.md), [dev-prereleases](docs/changes/dev-prereleases.md)
 - **Nothing merges into `main` or `dev` without the maintainer's approval.** Agents never merge, approve, or edit the protection rules. → [ADR-0007](docs/adr/0007-maintainer-approves-merges.md)
 - **The README is short.** Detail goes in `docs/`; long PR descriptions go in `docs/changes/`. → [ADR-0008](docs/adr/0008-short-readme.md)
+- **Italic is for the app's voice** (wordmark, tagline, empty-state messages); controls and labels are upright, and category labels are serif small-caps. → [ADR-0009](docs/adr/0009-italic-is-the-apps-voice.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.
