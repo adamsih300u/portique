@@ -2,7 +2,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { type ApiSettings, defaultApiSettings, sanitizeApiSettings } from "./http-model";
 import { type SavedCommand, sanitizeCommands } from "./saved-commands";
 
-export type Protocol = "ssh" | "telnet" | "serial" | "api";
+export type Protocol = "ssh" | "telnet" | "serial" | "api" | "local";
 export type AuthMethod = "password" | "key" | "keyAndPassword";
 
 export interface SerialSettings {
@@ -167,6 +167,17 @@ export interface Settings {
   uiScale: "normal" | "large";
   /** Minutes of inactivity before the vault locks itself; 0 = never. */
   vaultIdleMinutes: number;
+  /** Offer shells on this computer as terminals. */
+  localTerminals: boolean;
+  /** Ids of the shells to offer (from `listLocalShells`). */
+  localShells: string[];
+}
+
+/** A shell found on this computer. */
+export interface LocalShell {
+  id: string;
+  name: string;
+  isDefault: boolean;
 }
 
 /** Colours of the app chrome; "" means the built-in look. */
@@ -239,6 +250,12 @@ export const api = {
   setUi: (ui: UiColours) => invoke<void>("set_ui", { ui }),
   setPrefs: (restoreTabs: boolean, sftpLocalDir: string, uiScale: string, vaultIdleMinutes: number) =>
     invoke<void>("set_prefs", { restoreTabs, sftpLocalDir, uiScale, vaultIdleMinutes }),
+  listLocalShells: () => invoke<LocalShell[]>("list_local_shells"),
+  /** The local terminals the settings turn on, as profiles (never saved; empty when they are off). */
+  listLocalTerminals: async () => (await invoke<Profile[]>("list_local_terminals")).map(withDefaults),
+  /** Remembers the look of one local terminal (`id` is its profile id, `local:<shell>`). */
+  setLocalLook: (id: string, look: Profile["appearance"]) => invoke<void>("set_local_look", { id, look }),
+  setLocalTerminals: (enabled: boolean, shells: string[]) => invoke<void>("set_local_terminals", { enabled, shells }),
   setQuake: (enabled: boolean) => invoke<void>("set_quake", { enabled }),
   setQuakeKey: (key: string) => invoke<void>("set_quake_key", { key }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),

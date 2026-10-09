@@ -43,7 +43,8 @@ docs/           guides, and one file per change in docs/changes/
 | `lib.rs` | Registers the Tauri commands the interface can call, and app start-up |
 | `session.rs` | Running sessions and the frames they stream to the interface |
 | `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells, jump hosts, port forwards, the local SOCKS proxy, SFTP |
-| `telnet.rs`, `serial.rs` | The other two terminal protocols |
+| `telnet.rs`, `serial.rs` | The other two network and serial terminal protocols |
+| `local.rs` | Shells on this computer (cmd, PowerShell, WSL, Linux shells) run on a pseudo-terminal |
 | `http.rs` | The API client's HTTP engine: variables, OAuth, proxy |
 | `store.rs` | Profiles, themes and the config folder |
 | `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys |

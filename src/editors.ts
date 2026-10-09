@@ -11,7 +11,7 @@ const FONTS = [
   "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Hack", "Courier New", "monospace",
 ];
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
-const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0, api: 0 };
+const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0, api: 0, local: 0 };
 
 const opt = (value: string | number, label: string, selected: boolean) =>
   h("option", { value: String(value), selected }, label);
@@ -171,56 +171,9 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
   const stopBits = select([[1, "1"], [2, "2"]], s.stopBits);
   const flow = select([["none", "None"], ["software", "XON/XOFF"], ["hardware", "RTS/CTS"]], s.flow);
 
-  // appearance
-  const a = p.appearance;
-  const themeSel = h("select", {});
-  const fillThemes = (sel: string) =>
-    themeSel.replaceChildren(...allThemes().map((t) => opt(t.id, t.name, t.id === sel)));
-  fillThemes(a.themeId);
-  const editThemes = h("button", { type: "button", onclick: async () => {
-    const chosen = await themeDialog(themeSel.value);
-    fillThemes(chosen ?? themeSel.value);
-    themeSel.dispatchEvent(new Event("change"));
-    renderPreview();
-  } }, "Edit themes…");
-  const font = h("input", { value: a.fontFamily, list: "fonts" });
-  const fonts = h("datalist", { id: "fonts" }, ...FONTS.map((f) => h("option", { value: f })));
-  const size = h("input", { type: "number", value: String(a.fontSize), min: "6", max: "48", step: "0.5" });
-  const cursor = select([["block", "Block"], ["underline", "Underline"], ["bar", "Bar"]], a.cursorStyle);
-  const blink = h("input", { type: "checkbox", checked: a.cursorBlink });
-  const ligatures = h("input", { type: "checkbox", checked: a.ligatures });
+  const look = appearanceForm(p.appearance, () => host.value || "host");
+  host.addEventListener("input", look.refresh);
   const autoReconnect = h("input", { type: "checkbox", checked: p.autoReconnect });
-  const scrollback = h("input", { type: "number", value: String(a.scrollback), min: "0", step: "1000" });
-  const preview = h("pre", { class: "preview" });
-  const renderPreview = () => {
-    const t = getTheme(themeSel.value);
-    preview.style.background = t.background;
-    preview.style.color = t.foreground;
-    preview.style.fontFamily = font.value;
-    preview.style.fontSize = `${Number(size.value) || 14}px`;
-    const col = (text: string, color: string) => h("span", { style: `color:${color}` }, text);
-    preview.replaceChildren(
-      `user@${host.value || "host"}:~$ ls -la\n`,
-      col("drwxr-xr-x", t.ansi[4]), " ", col("config", t.ansi[2]), " ", col("error.log", t.ansi[1]), " ", col("notes.txt", t.ansi[3]), "\n",
-      ...t.ansi.map((c) => h("span", { style: `background:${c}` }, "  ")),
-    );
-  };
-  [themeSel, font, size, host].forEach((e) => e.addEventListener("input", renderPreview));
-  // A theme can carry a font (e.g. SGI's screen font); picking it applies the font too.
-  let prevThemeId = themeSel.value;
-  themeSel.addEventListener("change", () => {
-    const next = getTheme(themeSel.value);
-    const prev = getTheme(prevThemeId);
-    if (next.fontFamily) {
-      font.value = next.fontFamily;
-      if (next.fontSize) size.value = String(next.fontSize);
-    } else if (prev.fontFamily && font.value === prev.fontFamily) {
-      font.value = DEFAULT_FONT; // leaving a font-bearing theme: go back to the default font
-      size.value = "14";
-    }
-    prevThemeId = themeSel.value;
-  });
-  renderPreview();
 
   const forgetHost = h("button", { type: "button", onclick: async () => {
     await api.forgetHost(host.value, Number(port.value) || 22);
@@ -261,12 +214,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
   const loginBlock = h("div", {}, h("h3", {}, "Login"), credSection);
   const appearanceBlock = h("div", {},
     h("h3", {}, "Appearance"),
-    h("div", { class: "grid" },
-      field("Colour theme", h("div", { class: "row" }, themeSel, editThemes)),
-      field("Font", font), field("Font size", size), field("Cursor", cursor),
-      field("Scrollback (lines)", scrollback), h("label", { class: "check" }, blink, " Blinking cursor"),
-      h("label", { class: "check" }, ligatures, " Font ligatures (needs a font that has them)"), fonts),
-    preview);
+    look.el);
 
   const sync = () => {
     const pr = proto.value as Profile["protocol"];
@@ -336,10 +284,7 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
       port: serialPort.value.trim(), baud: Number(baud.value) || 9600, dataBits: Number(dataBits.value),
       parity: parity.value, stopBits: Number(stopBits.value), flow: flow.value,
     });
-    Object.assign(p.appearance, {
-      themeId: themeSel.value, fontFamily: font.value, fontSize: Number(size.value) || 14,
-      cursorStyle: cursor.value, cursorBlink: blink.checked, ligatures: ligatures.checked, scrollback: Number(scrollback.value) || 0,
-    });
+    Object.assign(p.appearance, look.read());
     const done = await api.saveProfile(p);
     saved = done;
     p.id = done.id; // a retry after a later step fails updates this profile instead of adding another
@@ -418,6 +363,100 @@ export async function manageKeysDialog(): Promise<KeyInfo[]> {
     h("p", { class: "muted" }, "Keys and passphrases are stored inside the encrypted vault (vault.bin), never as plain files."));
   await modal("SSH keys", body, [{ label: "Close", primary: true }], true);
   return api.listKeys();
+}
+
+// ---------------------------------------------------------------- appearance
+
+type Look = Profile["appearance"];
+
+/**
+ * The look of a terminal: theme, font, size, cursor, scrollback, with a live preview. `hostName` is what the
+ * preview's prompt shows. Shared by the profile editor and the local terminals' own dialog.
+ */
+function appearanceForm(a: Look, hostName: () => string) {
+  const themeSel = h("select", {});
+  const fillThemes = (sel: string) =>
+    themeSel.replaceChildren(...allThemes().map((t) => opt(t.id, t.name, t.id === sel)));
+  fillThemes(a.themeId);
+  const editThemes = h("button", { type: "button", onclick: async () => {
+    const chosen = await themeDialog(themeSel.value);
+    fillThemes(chosen ?? themeSel.value);
+    themeSel.dispatchEvent(new Event("change"));
+    renderPreview();
+  } }, "Edit themes…");
+  const font = h("input", { value: a.fontFamily, list: "fonts" });
+  const fonts = h("datalist", { id: "fonts" }, ...FONTS.map((f) => h("option", { value: f })));
+  const size = h("input", { type: "number", value: String(a.fontSize), min: "6", max: "48", step: "0.5" });
+  const cursor = select([["block", "Block"], ["underline", "Underline"], ["bar", "Bar"]], a.cursorStyle);
+  const blink = h("input", { type: "checkbox", checked: a.cursorBlink });
+  const ligatures = h("input", { type: "checkbox", checked: a.ligatures });
+  const scrollback = h("input", { type: "number", value: String(a.scrollback), min: "0", step: "1000" });
+  const preview = h("pre", { class: "preview" });
+  const renderPreview = () => {
+    const t = getTheme(themeSel.value);
+    preview.style.background = t.background;
+    preview.style.color = t.foreground;
+    preview.style.fontFamily = font.value;
+    preview.style.fontSize = `${Number(size.value) || 14}px`;
+    const col = (text: string, color: string) => h("span", { style: `color:${color}` }, text);
+    preview.replaceChildren(
+      `user@${hostName()}:~$ ls -la\n`,
+      col("drwxr-xr-x", t.ansi[4]), " ", col("config", t.ansi[2]), " ", col("error.log", t.ansi[1]), " ", col("notes.txt", t.ansi[3]), "\n",
+      ...t.ansi.map((c) => h("span", { style: `background:${c}` }, "  ")),
+    );
+  };
+  [themeSel, font, size].forEach((e) => e.addEventListener("input", renderPreview));
+  // A theme can carry a font (e.g. SGI's screen font); picking it applies the font too.
+  let prevThemeId = themeSel.value;
+  themeSel.addEventListener("change", () => {
+    const next = getTheme(themeSel.value);
+    const prev = getTheme(prevThemeId);
+    if (next.fontFamily) {
+      font.value = next.fontFamily;
+      if (next.fontSize) size.value = String(next.fontSize);
+    } else if (prev.fontFamily && font.value === prev.fontFamily) {
+      font.value = DEFAULT_FONT; // leaving a font-bearing theme: go back to the default font
+      size.value = "14";
+    }
+    prevThemeId = themeSel.value;
+  });
+  renderPreview();
+
+  const el = h("div", {},
+    h("div", { class: "grid" },
+      field("Colour theme", h("div", { class: "row" }, themeSel, editThemes)),
+      field("Font", font), field("Font size", size), field("Cursor", cursor),
+      field("Scrollback (lines)", scrollback), h("label", { class: "check" }, blink, " Blinking cursor"),
+      h("label", { class: "check" }, ligatures, " Font ligatures (needs a font that has them)"), fonts),
+    preview);
+  return {
+    el,
+    refresh: renderPreview,
+    read: (): Look => ({
+      themeId: themeSel.value, fontFamily: font.value, fontSize: Number(size.value) || 14,
+      cursorStyle: cursor.value as Look["cursorStyle"], cursorBlink: blink.checked, ligatures: ligatures.checked, scrollback: Number(scrollback.value) || 0,
+    }),
+  };
+}
+
+/** The look of one local terminal. Resolves with the new look once saved, or null if cancelled. */
+export async function localLookDialog(shell: Profile): Promise<Look | null> {
+  const form = appearanceForm(shell.appearance, () => "this-computer");
+  let saved: Look | null = null;
+  await modal(`Appearance: ${shell.name}`, h("div", {}, form.el,
+    h("p", { class: "muted" }, "Applies to this shell in every tab and is remembered. Ctrl+wheel in the terminal changes its size, and that is remembered too.")), [
+    { label: "Cancel" },
+    {
+      label: "Save",
+      primary: true,
+      action: async () => {
+        const look = form.read();
+        await api.setLocalLook(shell.id, look);
+        saved = look;
+      },
+    },
+  ]);
+  return saved;
 }
 
 // ---------------------------------------------------------------- theme editor
