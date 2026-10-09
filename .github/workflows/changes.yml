@@ -1,0 +1,50 @@
+# Decides whether a push or pull request changes anything that needs building. Docs,
+# licence text, repo-metadata files and editor settings do not; everything else
+# (source, manifests, lockfiles, scripts, and the workflow files themselves) does.
+# Called by ci.yml and dev-release.yml, which skip their builds when `code` is false.
+name: Changes
+
+on:
+  workflow_call:
+    outputs:
+      code:
+        description: "'true' when the change touches anything that needs building or checking."
+        value: ${{ jobs.changes.outputs.code }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the base commit has to be present to diff against it
+      - id: diff
+        env:
+          # A PR compares against the branch it targets; a push to dev against the previous tip.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          code=true
+          # No usable base (new branch, force push): build to be safe.
+          if [ -n "$BASE" ] && [ "$BASE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            code=false
+            while IFS= read -r file; do
+              case "$file" in
+                *.md | docs/* | LICENSE | .github/CODEOWNERS | .github/dependabot.yml \
+                  | .github/pull_request_template.md | .claude/* | .vscode/*) ;;
+                *)
+                  echo "needs a build: $file"
+                  code=true
+                  break
+                  ;;
+              esac
+            done < <(git diff --name-only "$BASE" "$HEAD")
+          fi
+          [ "$code" = true ] || echo "docs and metadata only: skipping builds"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
