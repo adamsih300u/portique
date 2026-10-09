@@ -159,13 +159,18 @@ export class TerminalTab {
 
   private options(p: Profile) {
     const a = p.appearance;
+    const theme = getTheme(a.themeId);
+    // A theme's spacing belongs to its font, so it only applies while that font is the one in use.
+    const spaced = theme.fontFamily !== undefined && theme.fontFamily === a.fontFamily;
     return {
       fontFamily: a.fontFamily,
+      letterSpacing: spaced ? theme.letterSpacing ?? 0 : 0,
+      lineHeight: spaced ? theme.lineHeight ?? 1 : 1,
       fontSize: a.fontSize,
       cursorStyle: a.cursorStyle,
       cursorBlink: a.cursorBlink,
       scrollback: a.scrollback,
-      theme: xtermTheme(getTheme(a.themeId)),
+      theme: xtermTheme(theme),
     };
   }
 
