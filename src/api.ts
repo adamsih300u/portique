@@ -235,6 +235,14 @@ export interface HttpResult {
 /** Profiles saved before API connections or saved commands existed have no settings for them: give every profile well-formed ones. */
 const withDefaults = (p: Profile): Profile => ({ ...p, api: sanitizeApiSettings(p.api), commands: sanitizeCommands(p.commands) });
 
+/** What a command run on a server printed. `code` is its exit status, if the server sent one. */
+export interface ExecOut {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  truncated: boolean;
+}
+
 /** The address a Toolbox network check used, and how each port went. */
 export interface ToolPorts {
   address: string;
@@ -303,6 +311,8 @@ export const api = {
   toolPorts: (host: string, ports: number[]) => invoke<ToolPorts>("tool_ports", { host, ports }),
   toolTcpPing: (host: string, port: number, count: number) => invoke<ToolPorts>("tool_tcp_ping", { host, port, count }),
   toolWake: (mac: string, broadcast: string) => invoke<string>("tool_wake", { mac, broadcast }),
+  sshExec: (session: string, command: string, stdin?: string, timeoutSecs?: number) =>
+    invoke<ExecOut>("ssh_exec", { session, command, stdin: stdin ?? null, timeoutSecs: timeoutSecs ?? null }),
   localHome: () => invoke<string>("local_home"),
   localList: (path: string) => invoke<Listing>("local_list", { path }),
   localMkdir: (path: string) => invoke<void>("local_mkdir", { path }),

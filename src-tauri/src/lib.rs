@@ -571,6 +571,13 @@ async fn tool_wake(mac: String, broadcast: String) -> Res<String> {
     toolbox::wake(&mac, &broadcast).await.map_err(err)
 }
 
+/// Runs one command on the server of an open SSH shell, beside it. The interface can already type into that
+/// shell, so this gives it nothing more; it just returns the output instead of drawing it in a terminal.
+#[tauri::command]
+async fn ssh_exec(session: String, command: String, stdin: Option<String>, timeout_secs: Option<u64>) -> Res<ssh::ExecOut> {
+    ssh::exec(&session, &command, stdin.as_deref(), timeout_secs.unwrap_or(30)).await.map_err(err)
+}
+
 #[tauri::command]
 fn local_home() -> String {
     sftp::local_home()
@@ -631,6 +638,7 @@ pub fn run() {
             tool_ports,
             tool_tcp_ping,
             tool_wake,
+            ssh_exec,
             vault_status,
             vault_create,
             vault_unlock,
