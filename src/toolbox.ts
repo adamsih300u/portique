@@ -24,6 +24,23 @@ export interface Tool {
   secret?: boolean;
   /** Label of the button that runs it again (generators). */
   again?: string;
+  /** Runs at once when the dialog opens, though it asks for input (an optional filter). */
+  auto?: boolean;
+  /** Something to find out when the dialog opens, before a plan can be shown. A failure is shown in the dialog. */
+  prepare?(): Promise<void>;
+  /**
+   * For a tool that changes something. The dialog shows `plan` as you type, nothing runs until the person presses the
+   * button named `label` (Enter in the box only moves to it), and `run` is what the button does.
+   */
+  action?: {
+    label: string;
+    /** What will happen, in words and the exact command. Throws for an input that isn't valid yet. */
+    plan(input: string): string;
+    /** Offers "Type it in the terminal": types the command for the person to run themselves, and closes the dialog. */
+    terminal?(input: string): void;
+    /** Close the dialog once it has run. */
+    closes?: boolean;
+  };
   run(input: string): string | Generated | Promise<string | Generated>;
 }
 
@@ -169,26 +186,61 @@ export async function openTool(tool: Tool) {
     return false;
   }
 
-  input?.addEventListener("input", () => tool.live && void exec());
+  const act = tool.action;
+  /** Shows what the button would do, or why it can't yet. Returns whether the input is acceptable. */
+  function plan(): boolean {
+    turn++; // an old answer must not replace the plan
+    result = null;
+    status.textContent = "";
+    const text = input?.value ?? "";
+    if (!text.trim()) return show(""), false;
+    try {
+      show(act!.plan(text));
+      return true;
+    } catch (e) {
+      show(String((e as Error).message ?? e), "error");
+      return false;
+    }
+  }
+
+  input?.addEventListener("input", () => (act ? plan() : tool.live && void exec()));
   input?.addEventListener("keydown", (e) => {
     const ke = e as KeyboardEvent;
     if (ke.key !== "Enter" || (asked?.multiline && !ke.ctrlKey)) return;
     ke.preventDefault();
-    if (tool.live) void copy();
+    if (act) document.querySelector<HTMLElement>(".overlay .modal-buttons .primary")?.focus(); // the person presses it on purpose
+    else if (tool.live) void copy();
     else void exec();
   });
 
   const body = h("div", {}, input ? field(asked!.label, input, asked!.hint) : null, out, status);
-  const buttons: ModalButton[] = [
-    { label: "Close" },
-    ...(tool.input && !tool.live ? [{ label: "Copy result", action: copy }, { label: "Run", primary: true, action: () => (void exec(), false as const) }] : []),
-    ...(tool.again ? [{ label: tool.again, action: () => (void exec(), false as const) }] : []),
-    ...(tool.live || !tool.input ? [{ label: "Copy", primary: true, action: copy }] : []),
-  ];
+  const buttons: ModalButton[] = act
+    ? [
+        { label: "Close" },
+        ...(act.terminal ? [{ label: "Type it in the terminal", action: () => (plan() ? act.terminal!(input!.value) : false) }] : []),
+        {
+          label: act.label,
+          primary: true,
+          action: async () => {
+            if (!plan()) return false;
+            await exec();
+            return act.closes && result ? undefined : false;
+          },
+        },
+      ]
+    : [
+        { label: "Close" },
+        ...(tool.input && !tool.live ? [{ label: "Copy result", action: copy }, { label: "Run", primary: true, action: () => (void exec(), false as const) }] : []),
+        ...(tool.again ? [{ label: tool.again, action: () => (void exec(), false as const) }] : []),
+        ...(tool.live || !tool.input ? [{ label: "Copy", primary: true, action: copy }] : []),
+      ];
   const shown = modal(tool.heading ?? tool.title.replace(/…$/, ""), body, buttons, true);
   // The modal focuses its first field itself. With none, focus the main button so Esc and Enter work.
   if (!input) document.querySelector<HTMLElement>(".overlay .modal-buttons .primary")?.focus();
-  if (!asked || tool.live) void exec();
+  if (tool.prepare) {
+    show("Checking the server…", "wait");
+    tool.prepare().then(() => { if (act) plan(); else void exec(); }, (e) => show(String((e as Error).message ?? e), "error"));
+  } else if (!asked || tool.live || tool.auto) void exec();
   await shown;
   turn++; // a lookup still running when the dialog closes has nobody to show its answer to
 }

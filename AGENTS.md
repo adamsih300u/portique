@@ -74,5 +74,6 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - **Italic is for the app's voice** (wordmark, tagline, empty-state messages); controls and labels are upright, and category labels are serif small-caps. → [ADR-0009](docs/adr/0009-italic-is-the-apps-voice.md)
 - A **local terminal** starts only from a shell Rust found, by id, and only when the settings turn it on; the interface never names a program. → [ADR-0010](docs/adr/0010-local-shells-start-by-id.md)
 - **Server tools run beside the shell**, on a new channel of its connection, only while it is connected; a person must be able to see what a tool will change before it runs. → [ADR-0011](docs/adr/0011-server-commands-run-beside-the-shell.md)
+- A server tool that **changes** something declares an `action`: the dialog shows the exact command first, nothing runs until the person presses the button, and root comes only from `sudo -n`; no tool enters a password. → [ADR-0012](docs/adr/0012-server-changes-show-their-command-first.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.
