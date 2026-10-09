@@ -52,6 +52,13 @@ fn save_profile(mut profile: Profile) -> Res<Profile> {
     Ok(profile)
 }
 
+/// Registers a host typed into quick connect and returns it with an id. It lives in memory only, so it
+/// is never listed or saved unless the user saves it from the editor.
+#[tauri::command]
+fn quick_profile(profile: Profile) -> Res<Profile> {
+    store::add_quick(profile).map_err(err)
+}
+
 #[tauri::command]
 fn delete_profile(id: String) -> Res<()> {
     let mut all = store::load_profiles().map_err(err)?;
@@ -548,6 +555,7 @@ pub fn run() {
             list_themes,
             save_theme,
             delete_theme,
+            quick_profile,
             set_password,
             has_password,
             list_keys,

@@ -1,3 +1,4 @@
+import { protoIcon, type IconKind } from "./proto-icon";
 import { h } from "./ui";
 
 /** Sidebar width before the user drags it, in unscaled pixels (multiplied by `--s` in CSS). */
@@ -32,7 +33,7 @@ export function parseState(raw: string | null): SidebarState {
 /** What the sidebar lists, however it is filtered or folded right now. */
 export interface Names {
   groups: string[];
-  rows: { name: string; proto: string }[];
+  rows: { name: string; icon: IconKind }[];
 }
 
 /**
@@ -52,7 +53,7 @@ export function initSidebar(app: HTMLElement, aside: HTMLElement, list: HTMLElem
     const ruler = h("div", { class: "side-ruler", "aria-hidden": "true" },
       ...groups.map((g) => h("div", { class: "group" }, g)),
       ...rows.map((r) => h("div", { class: "profile" },
-        h("span", { class: "dot" }), h("span", { class: "pname" }, r.name), h("span", { class: "proto" }, r.proto))));
+        protoIcon(r.icon), h("span", { class: "pname" }, r.name))));
     aside.append(ruler);
     const widest = ruler.scrollWidth;
     ruler.remove();

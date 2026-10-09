@@ -14,12 +14,20 @@ const ICONS = {
   close: '<path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/>',
 };
 
+/** An undecorated maximised window on Windows overshoots the work area by its invisible resize
+ * border, hiding the bottom rows behind the taskbar. Shrink the app by however far it overshoots. */
+function syncInset(maximized: boolean) {
+  const over = maximized ? Math.round(window.screenY + window.innerHeight - ((screen as { availTop?: number }).availTop ?? 0) - screen.availHeight) : 0;
+  document.documentElement.style.setProperty("--inset-bottom", `${Math.max(0, over)}px`);
+}
+
 /** Slim minimise / maximise / close buttons, plus a drag spacer, for the undecorated window. */
 export function windowControls(): HTMLElement[] {
   const win = getCurrentWindow();
   const maxBtn = h("button", { class: "wc", title: "Maximise", tabindex: -1, onclick: () => void win.toggleMaximize() }, svg(ICONS.max));
   const sync = async () => {
     const on = await win.isMaximized().catch(() => false);
+    syncInset(on);
     maxBtn.replaceChildren(svg(on ? ICONS.restore : ICONS.max));
     maxBtn.title = on ? "Restore" : "Maximise";
   };

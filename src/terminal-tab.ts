@@ -50,6 +50,10 @@ const clipboardProvider: IClipboardProvider = {
 };
 
 /** One terminal + one session. Reconnects on Enter after the session ends, or by itself if the link drops. */
+/** Silence that means output has stopped, and the least run of activity worth flagging (ms). */
+const QUIET_MS = 2000;
+const QUIET_MIN_RUN = 3000;
+
 export class TerminalTab {
   readonly el = document.createElement("div");
   readonly term: Terminal;
@@ -71,7 +75,14 @@ export class TerminalTab {
   private attempt = 0;
   private retryTimer: number | undefined;
   private retryNow: (() => void) | null = null;
+  private quietTimer: number | undefined;
+  /** When the current stretch of activity began (Enter pressed, or output after a quiet spell). */
+  private runStart: number | null = null;
+  private lastOutput = 0;
+  private lastInput = 0;
   onState: (s: TabState) => void = () => {};
+  /** Output has stopped after a command or a stretch of activity (shell-integration mark, else a quiet spell). */
+  onSettled: () => void = () => {};
   onTunnels: () => void = () => {};
   /** Search results changed: the 0-based index of the active match (-1 if none or too many) and the total. */
   onFindResults: (index: number, count: number) => void = () => {};
@@ -148,13 +159,18 @@ export class TerminalTab {
 
   private options(p: Profile) {
     const a = p.appearance;
+    const theme = getTheme(a.themeId);
+    // A theme's spacing belongs to its font, so it only applies while that font is the one in use.
+    const spaced = theme.fontFamily !== undefined && theme.fontFamily === a.fontFamily;
     return {
       fontFamily: a.fontFamily,
+      letterSpacing: spaced ? theme.letterSpacing ?? 0 : 0,
+      lineHeight: spaced ? theme.lineHeight ?? 1 : 1,
       fontSize: a.fontSize,
       cursorStyle: a.cursorStyle,
       cursorBlink: a.cursorBlink,
       scrollback: a.scrollback,
-      theme: xtermTheme(getTheme(a.themeId)),
+      theme: xtermTheme(theme),
     };
   }
 
@@ -276,6 +292,17 @@ export class TerminalTab {
     if (this.sessionId) void api.resize(this.sessionId, this.term.cols, this.term.rows);
   }
 
+  /**
+   * Once the link is up, put the cursor in the terminal, so a double-click on a profile
+   * needs no extra click. Only when this pane is on screen and nothing else holds focus
+   * (a dialog or another pane the user is typing in keeps it).
+   */
+  private takeFocusIfIdle() {
+    const a = document.activeElement;
+    const idle = !a || a === document.body || a === document.documentElement;
+    if (idle && this.el.offsetParent !== null) this.term.focus();
+  }
+
   focus() {
     this.term.focus();
   }
@@ -310,7 +337,25 @@ export class TerminalTab {
     } else if (kind === "D" && last?.start && !last.end) {
       last.end = this.term.registerMarker(0) ?? undefined;
       last.exit = arg === undefined || arg === "" ? undefined : Number(arg);
+      this.runStart = null;
+      clearTimeout(this.quietTimer);
+      this.onSettled();
     }
+  }
+
+  /** Output that is not just the echo of typing counts as activity; the quiet-spell fallback covers hosts without shell integration. */
+  private noteOutput() {
+    const now = Date.now();
+    if (now - this.lastInput < 150) return;
+    this.runStart ??= now;
+    this.lastOutput = now;
+    if (this.hasMarks) return; // the prompt marks tell us exactly when a command ends
+    clearTimeout(this.quietTimer);
+    this.quietTimer = window.setTimeout(() => {
+      const long = this.lastOutput - (this.runStart ?? this.lastOutput) >= QUIET_MIN_RUN;
+      this.runStart = null;
+      if (long) this.onSettled();
+    }, QUIET_MS);
   }
 
   private lastFinished() {
@@ -388,6 +433,8 @@ export class TerminalTab {
   }
 
   private send(b: Uint8Array) {
+    this.lastInput = Date.now();
+    if (b.includes(13)) this.runStart = this.lastInput;
     if (this.sessionId && this.state === "connected") void api.input(this.sessionId, b);
   }
 
@@ -424,6 +471,7 @@ export class TerminalTab {
     const bytes = new Uint8Array(buf);
     if (bytes[0] === 0) {
       this.term.write(bytes.subarray(1));
+      this.noteOutput();
       return;
     }
     const { state, message } = JSON.parse(new TextDecoder().decode(bytes.subarray(1)));
@@ -437,6 +485,7 @@ export class TerminalTab {
         this.attempt = 0;
         this.setState("connected");
         this.refit();
+        this.takeFocusIfIdle();
         break;
       case "lost":
         if (this.profile.autoReconnect) this.scheduleReconnect("Connection lost");
@@ -499,6 +548,7 @@ export class TerminalTab {
   dispose() {
     this.disposed = true;
     clearTimeout(this.retryTimer);
+    clearTimeout(this.quietTimer);
     this.ro.disconnect();
     if (this.sessionId) void api.close(this.sessionId);
     this.term.dispose();
