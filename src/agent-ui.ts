@@ -139,7 +139,6 @@ export async function agentActivityDialog() {
 const CONFIG_KINDS: { kind: AgentConfigKind; label: string; hint: string }[] = [
   { kind: "stdio", label: "Command (JSON settings)", hint: "For agent programs that start MCP servers as a command. It holds no secret and keeps working after Portique restarts." },
   { kind: "command", label: "Command (one line)", hint: "The same command on one line, for programs that add a server from the command line." },
-  { kind: "http", label: "Web address and token", hint: "For programs that connect to an address. It holds a token that changes each time Portique starts: treat it like a password." },
 ];
 
 /** Shows the text to give an agent program, so it can be read before it is pasted anywhere. */

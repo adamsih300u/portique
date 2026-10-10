@@ -52,8 +52,8 @@ Start with `agent/server.rs` (`turn_away`: who is let in) and `agent/ops.rs` (`o
 - Letting an agent be given a tab the person opened, on request. It would need its own decision.
 - MCP resources and prompts, streamed progress and cancellation (the server answers in the response, so long calls simply wait).
 - An opt-in persistent activity log, if the maintainer wants one despite the secrets risk (see D6).
-- A stable token for programs that can only connect by web address, kept in the vault so it survives restarts. Left out on purpose (D8): it needs a second credential or a secret on disk, and a setting to choose it, while `portique mcp` already gives a configuration that never changes.
-- A button to rotate the token without restarting; showing agent sessions in the sidebar.
+- Support for programs that can only connect to a web address. Left out on purpose (D2, D8): it would need the token in their settings, or a stored one, and a setting to choose it, while `portique mcp` gives a configuration that never changes and holds no secret.
+- Showing agent sessions in the sidebar.
 - When Portique crashes, its address file stays, and another program on the same computer could take the port and read the agent's messages (not a live token: the next run makes a new one). The bridge now only trusts a `127.0.0.1` address; a process-id check would close the rest.
 - Parallel `wait_for` calls are not limited in number; each re-reads up to 2 MB every 40 ms while it waits.
 
@@ -72,7 +72,7 @@ Start with `agent/server.rs` (`turn_away`: who is let in) and `agent/ops.rs` (`o
 - **Status:** accepted ([ADR-0017](../adr/0017-agent-server-in-the-app-on-loopback.md))
 - **Context:** An agent must share the person's sessions, logins and host-key questions, and programs speak stdio or HTTP.
 - **Decision:** An in-app `hyper` server on `127.0.0.1` with a per-start token, `Host` and `Origin` checks and a user-only address file; `portique mcp` bridges stdio.
-- **Consequences:** One vault and one set of prompts; the stdio configuration holds no secret; the app must be running; the HTTP token changes every start.
+- **Consequences:** One vault and one set of prompts; the configuration holds no secret; the app must be running. The interface offers only the bridge, never the address or token, so a program that can only connect to a web address is not supported. (An earlier version also offered a web address and token; it was removed to leave nothing secret to paste.)
 - **Alternatives considered:** A separate process (needs the vault), a socket or pipe (platform differences), an MCP library (heavy for this subset), a fixed port with a stored token (a long-lived secret on disk).
 
 ### D3. A command ends with markers typed around it in the open shell
@@ -119,6 +119,6 @@ Start with `agent/server.rs` (`turn_away`: who is let in) and `agent/ops.rs` (`o
 
 - **Status:** accepted
 - **Context:** The wording rules keep the documentation to plain descriptions, and the configuration formats are shared by many programs.
-- **Decision:** The connect dialog offers a `mcpServers` JSON entry, a one-line command and a web address with a token, not a recipe per product.
+- **Decision:** The connect dialog offers a `mcpServers` JSON entry and a one-line command, both starting `portique mcp`, not a recipe per product.
 - **Consequences:** The same text works for any program that takes those forms; a person with a program that wants something else adapts it.
 - **Alternatives considered:** A recipe per product dates quickly and names products we don't control.

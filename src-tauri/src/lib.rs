@@ -712,7 +712,7 @@ fn agent_activity(agents: State<'_, agent::Agents>) -> Vec<agent::Audit> {
     agents.activity()
 }
 
-/// Text to give an agent program: `stdio`, `command` or `http` (the last holds this run's token).
+/// Text to give an agent program: `stdio` (JSON settings) or `command` (one line). Neither holds a secret.
 #[tauri::command]
 fn agent_config(agents: State<'_, agent::Agents>, kind: String) -> Res<String> {
     agents.config(&kind).map_err(|e| e.0)

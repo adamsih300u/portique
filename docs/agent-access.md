@@ -37,9 +37,10 @@ If you have a vault, an agent cannot run anything until you let it, with your ma
 
 Choose **Connect an agent…** (in Settings, or in the palette once agent access is on). It shows the text to give your agent program, so you can read it before you paste it anywhere:
 
-- **Command (JSON settings)** is a `mcpServers` entry that starts `portique mcp`, a small bridge between the program and the running Portique. It holds **no secret** and keeps working after Portique restarts. This is the one to use if your program starts MCP servers as commands.
+- **Command (JSON settings)** is a `mcpServers` entry that starts `portique mcp`, a small bridge between the program and the running Portique.
 - **Command (one line)** is the same command on one line.
-- **Web address and token** is for programs that connect to a URL. It holds a token that **changes every time Portique starts**, so treat it like a password and expect to paste it again.
+
+Both hold **no secret** and keep working after Portique restarts: the bridge finds the current address and token itself each time. That is the only way in. There is no web address to give out and no token to paste, so there is nothing to leak from an agent's settings, and a program that can only connect to a URL is not supported.
 
 Portique must be running for an agent to reach it. If it isn't, the bridge tells the agent so, in words.
 
@@ -71,7 +72,7 @@ An agent never sees a password, key or the vault. It names a profile and Portiqu
 ## What keeps this safe
 
 - Nothing listens until you switch it on, and only on `127.0.0.1`. A request must carry a token made at start-up, must name the loopback address as its `Host`, and must not come from a web page (any `Origin` header is refused).
-- The token is written to `agent-endpoint.json` in the config folder, readable by you only, and removed when Portique quits.
+- The token is written to `agent-endpoint.json` in the config folder, readable by you only, and removed when Portique quits. It is for the bridge alone: it is never shown, copied or put in an agent's settings.
 - An agent reaches only profiles you marked, and only sessions it opened itself. Your own tabs are not visible to it.
 - A shell is a shell: an agent in a local terminal has your account's rights on this computer, Portique's own files included, and on a host it has the profile's login. Choose *Ask me each time* for those, and read each command. Characters that could disguise a command (an invisible character, a right-to-left override) are shown spelled out in the question.
 - With a vault, [your master password](#your-master-password) is needed before an agent's first step in each session, so nothing starts without you at the keyboard.
@@ -89,6 +90,6 @@ An agent never sees a password, key or the vault. It names a profile and Portiqu
 ## Troubleshooting
 
 - *"Portique is not running, or agent access is switched off"*: start Portique and turn the setting on.
-- *"Portique refused the request"*: Portique was restarted and the program still holds the old web address and token. Restart the program, or use the command form, which finds the new address by itself.
+- *"Portique refused the request"*: the bridge could not get in, usually because Portique was restarted at that moment. Try again; if it persists, restart the agent program so it starts a fresh bridge.
 - *"No profiles are open to agents"*: mark one with right-click → **Agent access…**.
 - *"The vault is locked"*: unlock Portique, then ask the agent to try again.

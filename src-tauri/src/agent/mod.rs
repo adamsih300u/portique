@@ -387,11 +387,12 @@ impl Agents {
         self.0.server.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map(server::Running::endpoint)
     }
 
-    /// The text to give an agent program so it can reach the server. `stdio` carries no secret; `http` carries the token.
+    /// The text to give an agent program so it can reach the server through the bridge. It holds no secret.
     pub fn config(&self, kind: &str) -> ToolResult<String> {
-        let running = self.0.server.lock().unwrap_or_else(|p| p.into_inner());
-        let running = running.as_ref().ok_or_else(|| ToolError("Agent access is off".into()))?;
-        server::config(running, kind).ok_or_else(|| ToolError(format!("unknown configuration \"{kind}\"")))
+        if self.endpoint().is_none() {
+            return Err(ToolError("Agent access is off".into()));
+        }
+        server::config(kind).ok_or_else(|| ToolError(format!("unknown configuration \"{kind}\"")))
     }
 }
 

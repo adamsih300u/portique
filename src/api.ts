@@ -245,8 +245,8 @@ export interface AgentAudit {
   outcome: string;
 }
 
-/** `stdio` and `command` hold no secret; `http` holds this run's token. */
-export type AgentConfigKind = "stdio" | "command" | "http";
+/** Both start the `portique mcp` bridge and hold no secret. */
+export type AgentConfigKind = "stdio" | "command";
 
 /** A shell found on this computer. */
 export interface LocalShell {

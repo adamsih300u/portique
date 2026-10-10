@@ -292,19 +292,13 @@ fn quote(s: &str) -> String {
     }
 }
 
-/// Text to paste into an agent program's settings. `stdio` and `command` hold no secret and keep working after a restart;
-/// `http` holds this run's token.
-pub fn config(r: &Running, kind: &str) -> Option<String> {
+/// Text to paste into an agent program's settings. Both forms start `portique mcp`, hold no secret, and keep working after
+/// a restart: the bridge finds the current address and token itself. There is deliberately no form that carries the token.
+pub fn config(kind: &str) -> Option<String> {
     let program = bridge_program();
-    let pretty = |v: Value| serde_json::to_string_pretty(&v).ok();
     match kind {
-        "stdio" => pretty(json!({ "mcpServers": { "portique": { "command": program, "args": ["mcp"] } } })),
+        "stdio" => serde_json::to_string_pretty(&json!({ "mcpServers": { "portique": { "command": program, "args": ["mcp"] } } })).ok(),
         "command" => Some(format!("{} mcp", quote(&program))),
-        "http" => pretty(json!({ "mcpServers": { "portique": {
-            "type": "http",
-            "url": format!("http://127.0.0.1:{}{PATH}", r.state.port),
-            "headers": { "Authorization": format!("Bearer {}", r.state.token) },
-        } } })),
         _ => None,
     }
 }
@@ -476,14 +470,15 @@ mod tests {
     #[tokio::test]
     async fn the_copyable_configurations() {
         let u = up().await;
-        let stdio: Value = serde_json::from_str(&config(&u.running, "stdio").unwrap()).unwrap();
+        let stdio: Value = serde_json::from_str(&config("stdio").unwrap()).unwrap();
         assert_eq!(stdio["mcpServers"]["portique"]["args"], json!(["mcp"]));
-        assert!(!config(&u.running, "stdio").unwrap().contains(&u.token), "the bridge needs no secret in its configuration");
-        assert!(config(&u.running, "command").unwrap().ends_with(" mcp"));
-        let http: Value = serde_json::from_str(&config(&u.running, "http").unwrap()).unwrap();
-        assert_eq!(http["mcpServers"]["portique"]["url"], u.url.as_str());
-        assert_eq!(http["mcpServers"]["portique"]["headers"]["Authorization"], format!("Bearer {}", u.token));
-        assert!(config(&u.running, "nonsense").is_none());
+        for kind in ["stdio", "command"] {
+            let text = config(kind).unwrap();
+            assert!(!text.contains(&u.token) && !text.contains(&u.url) && !text.contains("Bearer"), "{kind} holds no secret and no address");
+        }
+        assert!(config("command").unwrap().ends_with(" mcp"));
+        assert!(config("http").is_none(), "there is no form that carries the token");
+        assert!(config("nonsense").is_none());
         assert_eq!(quote("/opt/Portique App/portique"), "'/opt/Portique App/portique'");
         assert_eq!(quote("/usr/bin/portique"), "/usr/bin/portique");
         assert_eq!(quote("it's"), "'it'\\''s'");
