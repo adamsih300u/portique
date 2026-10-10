@@ -55,6 +55,17 @@ const ALIASES: Record<string, string> = {
 export const getTheme = (id: string) =>
   allThemes().find((x) => x.id === (ALIASES[id] ?? id)) ?? BUILTIN_THEMES[0];
 
+export const DEFAULT_FONT = "Cascadia Mono, Consolas, 'DejaVu Sans Mono', monospace";
+
+/**
+ * The font a terminal uses: the profile's own choice if it has one, else the theme's font, else the default.
+ * An empty value (or the stock default saved by older builds) means "no override".
+ */
+export function effectiveFont(a: { themeId: string; fontFamily: string }): string {
+  const own = a.fontFamily.trim();
+  return own && own !== DEFAULT_FONT ? own : getTheme(a.themeId).fontFamily || DEFAULT_FONT;
+}
+
 /** xterm measures glyphs once at open, so make sure webfonts are loaded first. */
 export async function ensureFont(fontFamily: string, size: number) {
   const load = Promise.all([

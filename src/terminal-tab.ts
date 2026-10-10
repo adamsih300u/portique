@@ -8,7 +8,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { api, Channel, type Profile } from "./api";
-import { getTheme, xtermTheme } from "./themes";
+import { effectiveFont, getTheme, xtermTheme } from "./themes";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
 import { toBytes } from "./ui";
 import { ensureUnlocked } from "./vault-ui";
@@ -162,9 +162,10 @@ export class TerminalTab {
     const a = p.appearance;
     const theme = getTheme(a.themeId);
     // A theme's spacing belongs to its font, so it only applies while that font is the one in use.
-    const spaced = theme.fontFamily !== undefined && theme.fontFamily === a.fontFamily;
+    const font = effectiveFont(a);
+    const spaced = theme.fontFamily !== undefined && theme.fontFamily === font;
     return {
-      fontFamily: a.fontFamily,
+      fontFamily: font,
       letterSpacing: spaced ? theme.letterSpacing ?? 0 : 0,
       lineHeight: spaced ? theme.lineHeight ?? 1 : 1,
       fontSize: a.fontSize,

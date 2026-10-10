@@ -1,6 +1,6 @@
 import { type Profile } from "./api";
 import { type TabState, TerminalTab } from "./terminal-tab";
-import { ensureFont, getTheme } from "./themes";
+import { effectiveFont, ensureFont, getTheme } from "./themes";
 import { h } from "./ui";
 
 /** "row": panes side by side (split right). "col": panes stacked (split down). */
@@ -127,7 +127,7 @@ export class Tab {
       this.focus(leaf);
       this.onPaneMenu(e);
     };
-    void ensureFont(p.appearance.fontFamily, p.appearance.fontSize).then(() => {
+    void ensureFont(effectiveFont(p.appearance), p.appearance.fontSize).then(() => {
       if (term.disposed) return; // closed while the font loaded
       term.mount(leaf.el);
       return term.connect();
