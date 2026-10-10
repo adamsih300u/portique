@@ -1,3 +1,4 @@
+mod agent;
 mod http;
 mod ipc;
 mod keys;
@@ -78,6 +79,11 @@ fn delete_profile(id: String) -> Res<()> {
     store::save_profiles(&all).map_err(err)?;
     // Best effort: a locked vault must not block deleting the profile entry.
     let _ = vault::global().delete(&vault::password_account(&id));
+    // Whatever access an agent had to it goes with it.
+    let mut s = window::load();
+    if s.agent.profiles.remove(&id).is_some() {
+        let _ = window::save(&s);
+    }
     Ok(())
 }
 
@@ -492,8 +498,9 @@ fn session_input(sessions: State<'_, Sessions>, id: String, data: Vec<u8>) {
 }
 
 #[tauri::command]
-fn session_resize(sessions: State<'_, Sessions>, id: String, cols: u16, rows: u16) {
+fn session_resize(sessions: State<'_, Sessions>, agents: State<'_, agent::Agents>, id: String, cols: u16, rows: u16) {
     sessions.send(&id, Ctl::Resize(cols, rows));
+    agents.resized(&id, cols, rows);
 }
 
 #[tauri::command]
@@ -606,6 +613,108 @@ async fn ssh_exec(session: String, command: String, stdin: Option<String>, timeo
     ssh::exec(&session, &command, stdin.as_deref(), timeout_secs.unwrap_or(30)).await.map_err(err)
 }
 
+// ---- agent access (MCP) --------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentStatus {
+    enabled: bool,
+    endpoint: Option<agent::Endpoint>,
+    sessions: Vec<agent::SessionInfo>,
+}
+
+fn agent_status_now(agents: &agent::Agents) -> AgentStatus {
+    AgentStatus { enabled: window::load().agent.enabled, endpoint: agents.endpoint(), sessions: agents.sessions() }
+}
+
+#[tauri::command]
+fn agent_status(agents: State<'_, agent::Agents>) -> AgentStatus {
+    agent_status_now(&agents)
+}
+
+/// Switches agent access on or off. Off closes every session an agent opened. If the server cannot start, the setting stays off.
+#[tauri::command]
+async fn agent_set_enabled(agents: State<'_, agent::Agents>, enabled: bool) -> Res<AgentStatus> {
+    let mut s = window::load();
+    s.agent.enabled = enabled;
+    window::save(&s).map_err(err)?;
+    if let Err(e) = agents.apply().await {
+        s.agent.enabled = false;
+        let _ = window::save(&s);
+        agents.stop();
+        return Err(err(e));
+    }
+    Ok(agent_status_now(&agents))
+}
+
+/// How far an agent may go on one profile (`local:<shell id>` for a local terminal). Only profiles that exist can be given access.
+#[tauri::command]
+fn agent_set_mode(agents: State<'_, agent::Agents>, profile_id: String, mode: window::AgentMode) -> Res<()> {
+    let mut s = window::load();
+    let saved = store::load_profiles().map_err(err)?.iter().any(|p| p.id == profile_id && p.protocol != store::Protocol::Api);
+    if !saved && local::profile_for(&profile_id, &s).is_none() {
+        return Err("that profile does not have a terminal an agent could use".into());
+    }
+    if mode == window::AgentMode::Off {
+        s.agent.profiles.remove(&profile_id);
+    } else {
+        s.agent.profiles.insert(profile_id, mode);
+    }
+    window::save(&s).map_err(err)?;
+    agents.policy_changed();
+    Ok(())
+}
+
+#[tauri::command]
+fn agent_mode(profile_id: String) -> window::AgentMode {
+    window::load().agent.mode(&profile_id)
+}
+
+/// The person's answer to a question the agent put (`agent-approval` event).
+#[tauri::command]
+fn agent_answer(agents: State<'_, agent::Agents>, id: String, decision: agent::Decision) -> bool {
+    agents.answer(&id, decision)
+}
+
+/// Shows an agent's session in a tab: replays what it printed so far, then streams the rest. Same frames as `connect_session`.
+#[tauri::command]
+fn agent_attach(agents: State<'_, agent::Agents>, id: String, on_event: Channel<InvokeResponseBody>) -> Res<()> {
+    if agents.attach(&id, Emitter::new(on_event)) { Ok(()) } else { Err("that session is gone".into()) }
+}
+
+/// The person typed into an agent's tab: the agent waits until it is handed back.
+#[tauri::command]
+fn agent_takeover(agents: State<'_, agent::Agents>, id: String) {
+    agents.took_control(&id);
+}
+
+#[tauri::command]
+fn agent_resume(agents: State<'_, agent::Agents>, id: String) {
+    agents.handed_back(&id);
+}
+
+/// Who holds the keyboard of an agent's session (`agent` or `user`); null for a session that is not an agent's.
+#[tauri::command]
+fn agent_controller(agents: State<'_, agent::Agents>, id: String) -> Option<&'static str> {
+    agents.controller(&id)
+}
+
+#[tauri::command]
+fn agent_activity(agents: State<'_, agent::Agents>) -> Vec<agent::Audit> {
+    agents.activity()
+}
+
+/// Text to give an agent program: `stdio`, `command` or `http` (the last holds this run's token).
+#[tauri::command]
+fn agent_config(agents: State<'_, agent::Agents>, kind: String) -> Res<String> {
+    agents.config(&kind).map_err(|e| e.0)
+}
+
+/// For `portique mcp`: the bridge between an agent program's stdio and the running app.
+pub fn run_mcp_bridge() -> i32 {
+    agent::shim::main()
+}
+
 #[tauri::command]
 fn local_home() -> String {
     sftp::local_home()
@@ -640,6 +749,18 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Sessions::default())
         .setup(|app| {
+            let sessions = tauri::Manager::state::<Sessions>(app).inner().clone();
+            let agents = agent::Agents::new(std::sync::Arc::new(agent::AppHost(app.handle().clone())), sessions);
+            tauri::Manager::manage(app, agents.clone());
+            // The server only listens if the person switched agent access on.
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = agents.apply().await {
+                    eprintln!("agent access disabled: {e:#}");
+                    let mut s = window::load();
+                    s.agent.enabled = false;
+                    let _ = window::save(&s);
+                }
+            });
             let settings = window::load();
             if settings.quake {
                 if let Err(e) = window::apply_quake(app.handle(), &settings) {
@@ -663,6 +784,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            agent_status,
+            agent_set_enabled,
+            agent_set_mode,
+            agent_mode,
+            agent_answer,
+            agent_attach,
+            agent_takeover,
+            agent_resume,
+            agent_controller,
+            agent_activity,
+            agent_config,
             tool_dns,
             tool_ports,
             tool_tcp_ping,
@@ -731,6 +863,12 @@ pub fn run() {
             read_text_file,
             write_text_file,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Take the address file down with the server, so the bridge does not look for a dead one.
+            if matches!(event, tauri::RunEvent::Exit) {
+                tauri::Manager::state::<agent::Agents>(app).stop();
+            }
+        });
 }
