@@ -269,6 +269,12 @@ fn list_keys() -> Res<Vec<keys::KeyInfo>> {
     keys::list().map_err(err)
 }
 
+/// The public half of a key in the vault, for putting on a server. Nothing secret is returned.
+#[tauri::command]
+fn key_public(id: String) -> Res<keys::PublicKey> {
+    keys::public(&id).map_err(err)
+}
+
 #[tauri::command]
 fn import_key(name: String, pem: String, passphrase: Option<String>) -> Res<keys::KeyInfo> {
     keys::import(&name, &pem, passphrase.as_deref().filter(|s| !s.is_empty())).map_err(err)
@@ -670,6 +676,7 @@ pub fn run() {
             has_password,
             list_keys,
             import_key,
+            key_public,
             delete_key,
             forget_host,
             list_serial_ports,

@@ -41,11 +41,14 @@ The full file-by-file table is in [CONTRIBUTING.md](CONTRIBUTING.md#how-the-code
 
     npm install
     npx tsc --noEmit                                         # type-check (CI runs this)
+    npm run lint                                             # eslint (CI runs this)
+    npm test                                                 # interface unit tests (CI runs these)
     cargo test --manifest-path src-tauri/Cargo.toml --lib    # backend tests (CI runs these)
+    cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings   # CI runs this
     npm run build                                            # interface bundle
     npm run tauri dev                                        # run the app
 
-Windows executable from Linux: see [CONTRIBUTING.md](CONTRIBUTING.md#a-windows-build-from-linux). There is no interface test runner yet; for visual changes, serve `npx vite preview` in a headless browser with a mocked `window.__TAURI_INTERNALS__` and check each interface look, a light one especially. Say in the change file what you did and did not run. Don't claim something works on Windows or against a real SSH server unless you ran it there.
+Windows executable from Linux: see [CONTRIBUTING.md](CONTRIBUTING.md#a-windows-build-from-linux). Logic that doesn't need a window has unit tests in `src/*.test.ts`; there is no test runner for the screens, so for visual changes serve `npx vite preview` in a headless browser with a mocked `window.__TAURI_INTERNALS__` and check each interface look, a light one especially. Say in the change file what you did and did not run. Don't claim something works on Windows or against a real SSH server unless you ran it there.
 
 ## Doing a change
 
