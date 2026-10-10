@@ -148,6 +148,17 @@ pub fn hide_markers(text: &str) -> String {
     out
 }
 
+/// A character that hides or reorders what is shown: a control character, or an invisible or direction-changing format character.
+pub fn hidden(c: char) -> bool {
+    (c.is_control() && !matches!(c, '\n' | '\t'))
+        || matches!(c as u32, 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB)
+}
+
+/// Text as the person should read it in a question or the log: characters that could disguise it are shown as `⟨U+202E⟩`.
+pub fn show_text(s: &str) -> String {
+    s.chars().map(|c| if hidden(c) { format!("⟨U+{:04X}⟩", c as u32) } else { c.to_string() }).collect()
+}
+
 /// A random hex nonce.
 pub fn nonce() -> String {
     let mut b = [0u8; 6];
@@ -310,6 +321,18 @@ mod tests {
         assert_eq!(Dialect::of(Protocol::Local, "local:cmd"), None);
         assert_eq!(Dialect::of(Protocol::Local, "local:fish"), None);
         assert_eq!(Dialect::of(Protocol::Serial, "x"), None);
+    }
+
+    #[test]
+    fn text_that_could_disguise_a_command_is_shown_plainly() {
+        // A right-to-left override can make "rm -rf ~" read as something else.
+        let sneaky = "echo safe \u{202e}fr- mr\u{202c}";
+        let shown = show_text(sneaky);
+        assert!(shown.contains("⟨U+202E⟩") && shown.contains("⟨U+202C⟩") && !shown.contains('\u{202e}'), "{shown}");
+        assert_eq!(show_text("zero\u{200b}width"), "zero⟨U+200B⟩width");
+        assert_eq!(show_text("line one\nline\ttwo"), "line one\nline\ttwo", "newlines and tabs are fine");
+        assert_eq!(show_text("é ü 日本"), "é ü 日本");
+        assert_eq!(show_text("bell\u{7}"), "bell⟨U+0007⟩");
     }
 
     #[test]

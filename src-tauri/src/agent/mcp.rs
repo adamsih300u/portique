@@ -34,7 +34,7 @@ pub fn client_name(msg: &Value) -> Option<String> {
     }
     let info = &msg["params"]["clientInfo"];
     let name = info["title"].as_str().or_else(|| info["name"].as_str())?;
-    Some(name.chars().filter(|c| !c.is_control()).take(60).collect())
+    Some(name.chars().filter(|c| !super::exec::hidden(*c)).take(60).collect())
 }
 
 fn error(id: Value, code: i64, message: impl Into<String>) -> Value {

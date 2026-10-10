@@ -335,7 +335,9 @@ impl Agents {
             }
         }
         exec::check_command(command, s.bracketed()).map_err(|e| ToolError(format!("Not typed: {e}.")))?;
-        self.approve(&s, Kind::Command, command).await?;
+        // The person reads the command with anything that could disguise it spelled out.
+        let shown = exec::show_text(command);
+        self.approve(&s, Kind::Command, &shown).await?;
         self.writable(&s)?; // the person may have taken over while the question was open
 
         let nonce = exec::nonce();
@@ -402,12 +404,15 @@ impl Agents {
                     note: Some(note.into()),
                 };
             }
-            // Wake on output, and no later than the next moment a check could change.
+            // Wake on output, and no later than the next moment a check could change. Output comes in bursts, so
+            // look again once it has paused a moment: a command that prints a lot must not be rescanned per chunk.
             let wake = if begin.is_none() { (started + MARKER_WITHIN).min(deadline) } else { deadline };
-            changed(&mut rx, wake.max(now + Duration::from_millis(1))).await;
+            if changed(&mut rx, wake.max(now + Duration::from_millis(1))).await {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
         };
         s.set_read_cursor(result.cursor);
-        self.log(&s, "run", command, &match result.exit_code {
+        self.log(&s, "run", &shown, &match result.exit_code {
             Some(c) => format!("exit {c}"),
             None => result.status.to_string(),
         });

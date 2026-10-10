@@ -45,6 +45,10 @@ Turn on **Settings… → Local terminals → Show local terminals** and choose 
 
 When any terminal ends, the tab says "Session closed" and **Enter** starts a new one.
 
+### Agent access
+
+Turn on **Settings… → Agent access** and AI agents can open terminals in Portique, run commands and read the results, in tabs you can watch and take over. You choose, profile by profile (right-click → **Agent access…**), whether an agent may use it at all, must ask you for each step, or may go ahead. An agent never sees a password or key. See [Agent access](agent-access.md).
+
 ### API connections
 
 Choose **API** as the protocol, give it a base address, and work with that endpoint in a tab: saved requests down the left, the request and its response on the right. It has environments with vault-backed secrets, OAuth 2.0 sign-in, checks on responses, sending through an SSH host, and import and export. See [the API client guide](api-client.md).
@@ -110,6 +114,7 @@ The gear (*Menu and settings*) holds **Save workspace…**, a **Sidebar** switch
 - **Vault: Lock the vault after** Never, 1, 5, 15 (the default), 30 minutes or 1 hour, counted from your last key press, click or scroll. Using the vault also resets it. Open connections stay open when it locks; saved passwords and keys are asked for again.
 - **File browser:** the default folder on this computer.
 - **Local terminals:** described [above](#local-terminals).
+- **Agent access:** described [above](#agent-access), with buttons to **Connect an agent…** and see **Activity…**.
 - **Drop-down mode:** a terminal on a global hotkey.
 - **GPU rendering for terminals.**
 
@@ -125,7 +130,7 @@ Each row starts with an icon for its kind of connection, tinted to match: a boxe
 
 - **Vault.** Saved passwords, key passphrases, imported private keys and API secrets live in one encrypted file, `vault.bin`. A master password goes through Argon2id (128 MiB, 3 passes, 4 lanes) and then XChaCha20-Poly1305, with the header authenticated and a fresh nonce on every save. While unlocked, each secret stays sealed in memory and is opened only for the moment it is used; everything is wiped when it locks. The keys are kept in locked memory so they are not swapped to disk (and, on Linux, not written to a crash dump), and release builds on Linux refuse debuggers and memory reads from other programs (set `PORTIQUE_ALLOW_DEBUG=1` to turn that off when you need to debug). A new master password must be hard to guess: a bar shows how it rates, and several unrelated words work well. If `vault.bin` is older than the newest one this computer has opened (a restored backup, say), Portique warns and asks you to confirm before opening it. There is **no recovery** if you lose the master password. **Change master password…** is in the gear menu and the palette.
 - **SSH keys.** **SSH keys…** (gear menu, palette, or **Manage keys…** in the profile editor) imports a private key into the vault and lists what it holds. A profile then chooses its *Private key*. Deleting a key warns you that profiles using it will stop connecting. `keys.json` holds only names and fingerprints.
-- **Where things are.** Everything lives in `~/.config/portique` (`%APPDATA%\portique` on Windows): `profiles.json`, `vault.bin`, `keys.json`, `known_hosts.json` (pinned host keys), `themes.json`, `workspaces.json`, `settings.json` and `api.json` (API requests and environments).
+- **Where things are.** Everything lives in `~/.config/portique` (`%APPDATA%\portique` on Windows): `profiles.json`, `vault.bin`, `keys.json`, `known_hosts.json` (pinned host keys), `themes.json`, `workspaces.json`, `settings.json` and `api.json` (API requests and environments). While agent access is on, `agent-endpoint.json` holds the address and token for the agent bridge; only you can read it, and Portique removes it when it quits.
 - **To move to another computer or system,** copy that whole folder. Without `known_hosts.json` you will be asked to trust each server again, and without `api.json` your saved API requests are gone.
 
 ## Shortcuts

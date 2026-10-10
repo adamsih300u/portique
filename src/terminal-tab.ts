@@ -80,6 +80,15 @@ export class TerminalTab {
   private runStart: number | null = null;
   private lastOutput = 0;
   private lastInput = 0;
+  /** The session an agent opened that this tab shows, until the person reconnects it as their own. */
+  agentSession: string | null = null;
+  /** Which agent session to attach to on the next `connect`. */
+  private attachTo: string | null = null;
+  /** Who holds the keyboard of an agent's session. */
+  controller: "agent" | "user" = "agent";
+  /** The agent's name for itself, for the badge. */
+  agentName = "";
+  onController: () => void = () => {};
   onState: (s: TabState) => void = () => {};
   /** Output has stopped after a command or a stretch of activity (shell-integration mark, else a quiet spell). */
   onSettled: () => void = () => {};
@@ -119,6 +128,7 @@ export class TerminalTab {
     this.term.onData((d) => this.send(toBytes(d)));
     this.term.onBinary((d) => this.send(Uint8Array.from(d, (c) => c.charCodeAt(0))));
     this.term.onKey(({ domEvent }) => {
+      this.takeOver();
       if (this.state === "disconnected" && domEvent.key === "Enter") void this.connect();
       else if (this.state === "reconnecting") {
         if (domEvent.key === "Enter") this.retryNow?.();
@@ -467,6 +477,7 @@ export class TerminalTab {
   /** Types a saved command into the session (as a paste, so a multi-line one is safe); `enter` also runs it. */
   typeCommand(text: string, enter: boolean) {
     if (!this.connected) return;
+    this.takeOver();
     this.term.paste(text.replace(/\r?\n/g, "\r"));
     if (enter) this.send(toBytes("\r"));
     this.term.focus();
@@ -474,7 +485,39 @@ export class TerminalTab {
 
   async paste() {
     const s = await navigator.clipboard.readText().catch(() => "");
-    if (s) this.term.paste(s);
+    if (!s) return;
+    this.takeOver();
+    this.term.paste(s);
+  }
+
+  // ------------------------------------------------------------ a session an agent opened
+
+  /** Shows the session an agent opened, instead of connecting a new one. Call before `connect`. */
+  showAgentSession(id: string, client: string) {
+    this.agentSession = id;
+    this.attachTo = id;
+    this.agentName = client;
+  }
+
+  /** The person typed: the agent is paused until they hand the terminal back. */
+  private takeOver() {
+    if (!this.agentSession || this.controller === "user" || this.state !== "connected") return;
+    this.controller = "user";
+    void api.agentTakeover(this.agentSession);
+    this.onController();
+  }
+
+  /** Lets the agent type again. */
+  handBack() {
+    if (!this.agentSession || this.controller === "agent") return;
+    this.controller = "agent";
+    void api.agentResume(this.agentSession);
+    this.onController();
+  }
+
+  /** The person pauses the agent without typing anything. */
+  pauseAgent() {
+    this.takeOver();
   }
 
   async connect(password?: string, passphrase?: string) {
@@ -485,8 +528,21 @@ export class TerminalTab {
     const ch = new Channel<ArrayBuffer>();
     ch.onmessage = (buf) => this.onFrame(buf);
     this.term.options.disableStdin = false;
+    // Connecting again after an agent's session ended makes a session of the person's own.
+    const attach = this.attachTo;
+    this.attachTo = null;
+    if (!attach && this.agentSession) {
+      this.agentSession = null;
+      this.controller = "agent";
+      this.onController();
+    }
     try {
-      this.sessionId = await api.connect(this.profile.id, this.term.cols, this.term.rows, ch, password, passphrase);
+      if (attach) {
+        this.sessionId = attach;
+        await api.agentAttach(attach, ch);
+      } else {
+        this.sessionId = await api.connect(this.profile.id, this.term.cols, this.term.rows, ch, password, passphrase);
+      }
     } catch (e) {
       this.fail(String(e));
     }
@@ -499,7 +555,12 @@ export class TerminalTab {
       this.noteOutput();
       return;
     }
-    const { state, message } = JSON.parse(new TextDecoder().decode(bytes.subarray(1)));
+    const { state, message } = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as { state: string; message: string };
+    // An agent's session is not ours to retry, unlock or log in to again: say how it ended and let the person decide.
+    if (this.agentSession && ["lost", "vault-locked", "need-password", "need-passphrase"].includes(state)) {
+      this.ended(`\r\n\x1b[2m[The agent's session ended${message ? `: ${message}` : ""}. Press Enter to open one of your own]\x1b[0m\r\n`);
+      return;
+    }
     switch (state) {
       case "connecting":
         this.term.writeln(`\x1b[2m${message}\x1b[0m`);

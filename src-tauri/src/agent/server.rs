@@ -111,6 +111,9 @@ fn publish(dir: &std::path::Path, state: &State) -> Result<PathBuf> {
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
         let mut f = opts.open(&tmp).context("cannot write the agent endpoint file")?;
+        // `mode` only counts when the file is created; a leftover file keeps its old rights unless they are set again.
+        #[cfg(unix)]
+        f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
         f.write_all(&body)?;
     }
     std::fs::rename(&tmp, &path)?;

@@ -249,6 +249,7 @@ impl Agents {
     }
 
     /// Whether a session belongs to an agent, and if so whether the person holds the keyboard.
+    #[cfg(test)]
     pub fn controller(&self, id: &str) -> Option<&'static str> {
         self.registry().get(id).map(|s| if s.paused() { "user" } else { "agent" })
     }

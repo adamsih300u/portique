@@ -35,6 +35,7 @@ On Linux you also need a few system libraries; [CONTRIBUTING.md](CONTRIBUTING.md
 - [Using Portique](docs/using-portique.md) is the full tour of what it can do.
 - [The command palette](docs/command-palette.md) covers quick connect, saved commands, the toolbox and the server tools.
 - [The API client](docs/api-client.md) covers connections, environments, checks and import.
+- [Agent access](docs/agent-access.md) covers letting an AI agent use your terminals, in tabs you can watch.
 - [CONTRIBUTING.md](CONTRIBUTING.md) explains how the code is laid out and how we work.
 - [AGENTS.md](AGENTS.md) is the same, for AI coding agents.
 

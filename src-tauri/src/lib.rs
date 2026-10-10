@@ -665,11 +665,6 @@ fn agent_set_mode(agents: State<'_, agent::Agents>, profile_id: String, mode: wi
     Ok(())
 }
 
-#[tauri::command]
-fn agent_mode(profile_id: String) -> window::AgentMode {
-    window::load().agent.mode(&profile_id)
-}
-
 /// The person's answer to a question the agent put (`agent-approval` event).
 #[tauri::command]
 fn agent_answer(agents: State<'_, agent::Agents>, id: String, decision: agent::Decision) -> bool {
@@ -691,12 +686,6 @@ fn agent_takeover(agents: State<'_, agent::Agents>, id: String) {
 #[tauri::command]
 fn agent_resume(agents: State<'_, agent::Agents>, id: String) {
     agents.handed_back(&id);
-}
-
-/// Who holds the keyboard of an agent's session (`agent` or `user`); null for a session that is not an agent's.
-#[tauri::command]
-fn agent_controller(agents: State<'_, agent::Agents>, id: String) -> Option<&'static str> {
-    agents.controller(&id)
 }
 
 #[tauri::command]
@@ -787,12 +776,10 @@ pub fn run() {
             agent_status,
             agent_set_enabled,
             agent_set_mode,
-            agent_mode,
             agent_answer,
             agent_attach,
             agent_takeover,
             agent_resume,
-            agent_controller,
             agent_activity,
             agent_config,
             tool_dns,

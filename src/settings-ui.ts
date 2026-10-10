@@ -1,3 +1,4 @@
+import { agentSection } from "./agent-ui";
 import { api, type LocalShell, type Settings } from "./api";
 import { field, h, modal } from "./ui";
 
@@ -15,6 +16,7 @@ function accelerator(e: KeyboardEvent): string | null {
 export async function settingsDialog(current: Settings): Promise<Settings | null> {
   const next: Settings = structuredClone(current);
   const shells: LocalShell[] = await api.listLocalShells().catch(() => []);
+  const agents = agentSection(await api.agentStatus().catch(() => null));
 
   const scale = h("select", {},
     h("option", { value: "normal" }, "Normal"), h("option", { value: "large" }, "Large"));
@@ -75,6 +77,7 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
     h("label", { class: "check" }, local, " Show local terminals"),
     shells.length ? pickList : h("small", {}, "No shells were found on this computer."),
     h("small", {}, "Shells on this computer open in their own tabs, listed under Local in the sidebar."),
+    agents.el,
     h("h3", {}, "Drop-down mode"),
     h("label", { class: "check" }, quake, " Drop-down terminal on a global hotkey"),
     field("Hotkey", key, undefined),
@@ -106,6 +109,7 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
         next.localShells = picks.filter(({ box }) => box.checked).map(({ s }) => s.id);
         await api.setLocalTerminals(next.localTerminals, next.localShells);
         await api.setPrefs(next.restoreTabs, next.sftpLocalDir, next.uiScale, next.vaultIdleMinutes);
+        if (agents.enabled() !== current.agent.enabled) next.agent = { ...next.agent, enabled: (await api.agentSetEnabled(agents.enabled())).enabled };
         saved = next;
       },
     },

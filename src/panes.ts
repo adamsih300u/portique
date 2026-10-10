@@ -1,3 +1,4 @@
+import { controllerBadge } from "./agent-core";
 import { type Profile } from "./api";
 import { type TabState, TerminalTab } from "./terminal-tab";
 import { effectiveFont, ensureFont, getTheme } from "./themes";
@@ -78,8 +79,24 @@ export class Tab {
     return tab;
   }
 
+  /** A tab for a session an agent opened: it shows that session instead of connecting a new one. */
+  static createForAgent(profile: Profile, session: string, client: string): Tab {
+    const tab = new Tab();
+    const leaf = tab.makeLeaf(profile, { session, client });
+    tab.root = leaf;
+    tab.focusedLeaf = leaf;
+    leaf.el.classList.add("focused");
+    tab.el.append(leaf.el);
+    tab.render();
+    return tab;
+  }
+
   get focused(): TerminalTab {
     return this.focusedLeaf.term;
+  }
+  /** Some pane shows a session an agent opened. Such a tab is not saved with the layout: its session ends with the app. */
+  get hasAgent(): boolean {
+    return leavesOf(this.root).some((l) => l.term.agentSession !== null);
   }
   /** Name shown in the tab bar and the command palette. */
   get title(): string {
@@ -116,10 +133,12 @@ export class Tab {
     return sp;
   }
 
-  private makeLeaf(p: Profile): Leaf {
+  private makeLeaf(p: Profile, agent?: { session: string; client: string }): Leaf {
     const term = new TerminalTab(p);
+    if (agent) term.showAgentSession(agent.session, agent.client);
     const leaf = new Leaf(term);
     term.onState = () => this.render();
+    term.onController = () => this.render();
     term.onSettled = () => this.flag();
     term.onTunnels = () => this.render();
     term.onFocus = () => this.focus(leaf, false);
@@ -300,7 +319,9 @@ export class Tab {
     this.header.title = this.customName ? `${t.profile.name} (renamed)` : "";
     const n = this.paneCount;
     const tunnels = leavesOf(this.root).flatMap((l) => l.term.tunnels);
+    const badge = t.agentSession ? controllerBadge(t.controller, t.agentName) : null;
     this.extra.replaceChildren(
+      ...(badge ? [h("span", { class: `agent-badge ${t.controller === "user" ? "you" : ""}`, title: badge.tip }, badge.text)] : []),
       ...(n > 1 ? [h("span", { title: `${n} panes` }, `⊞${n}`)] : []),
       ...(tunnels.length
         ? [h("span", { class: tunnels.some((x) => x.error) ? "warn" : "", title: tunnels.map((x) => `${x.error ? "✕" : "✓"} ${x.label}${x.error ? ` (${x.error})` : ""}`).join("\n") }, `⇄${tunnels.length}`)]

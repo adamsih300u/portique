@@ -47,5 +47,8 @@ Style, so a record reads in under a minute:
 | [0013](0013-older-vault-is-refused.md) | A vault older than the last one opened is refused | accepted |
 | [0014](0014-secrets-sealed-in-memory.md) | Secrets stay sealed in memory and open one at a time | accepted |
 | [0015](0015-keys-pinned-and-process-hardened.md) | Vault keys live in locked pages and release builds refuse same-user debugging | accepted |
+| [0016](0016-agent-access-is-off-and-per-profile.md) | Agent access is off by default, set per profile, and kept outside the profile | accepted |
+| [0017](0017-agent-server-in-the-app-on-loopback.md) | The agent server lives in the app, listens on loopback only, and a bridge serves stdio | accepted |
+| [0018](0018-commands-finish-with-markers-in-the-open-shell.md) | A command finishes with markers typed around it in the person's open shell | accepted |
 
 The same decisions are summarised for agents under *Standing decisions* in [AGENTS.md](../../AGENTS.md).
