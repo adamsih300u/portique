@@ -1,7 +1,9 @@
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { emblem } from "./emblem";
-import { api, type Profile, type Settings, setUnlockHook } from "./api";
+import { modeMenuLabel } from "./agent-core";
+import { type AgentSessionEvent, agentAccessDialog, agentActivityDialog, agentConfigDialog, watchAgents } from "./agent-ui";
+import { api, newProfile as blankProfile, type Profile, type Settings, setUnlockHook } from "./api";
 import { applyChrome, chromeDialog, DEFAULT_UI, PRESET_NAMES, presetUi } from "./chrome";
 import { FileTab } from "./file-tab";
 import { ApiTab } from "./api-tab";
@@ -39,7 +41,7 @@ interface Workspaces {
 
 type AnyTab = Tab | FileTab | ApiTab;
 
-let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15, localTerminals: false, localShells: [] };
+let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15, localTerminals: false, localShells: [], agent: { enabled: false, requirePassword: true, profiles: {} } };
 let profiles: Profile[] = [];
 /** Shells on this computer that the settings turn on. They exist only in memory and are never saved, so they stay apart from `profiles`. */
 let localTerms: Profile[] = [];
@@ -222,6 +224,7 @@ function profileMenu(p: Profile): MenuEntries {
         { label: "Open in split below", action: () => splitActive("col", p) },
       ] : []),
       null,
+      { label: modeMenuLabel(agentMode(p)), action: () => void agentAccess(p) },
       { label: "Appearance…", action: () => void localAppearance(p) },
     ];
   }
@@ -244,6 +247,7 @@ function profileMenu(p: Profile): MenuEntries {
       { label: "Open in split below", action: () => splitActive("col", p) },
     ] : []),
     null,
+    { label: modeMenuLabel(agentMode(p)), action: () => void agentAccess(p) },
     { label: "Edit…", action: () => void edit(p) },
     { label: "Duplicate…", action: () => void duplicate(p) },
     null,
@@ -310,8 +314,11 @@ function addTab(layout: Layout): Tab | null {
   try {
     tab = Tab.create(layout, findProfile);
   } catch {} // a malformed saved layout must not stop the rest from restoring
-  if (!tab) return null;
-  const t = tab;
+  return tab ? register(tab) : null;
+}
+
+/** Puts a built tab into the tab bar and the stage. */
+function register(t: Tab): Tab {
   t.header.addEventListener("click", () => activate(t));
   t.header.addEventListener("auxclick", (e) => e.button === 1 && closeTab(t));
   t.header.addEventListener("contextmenu", (e) => menuOn(e, tabMenu(t)));
@@ -451,6 +458,39 @@ function openTab(p: Profile) {
   if (tab) activate(tab);
 }
 
+// ---------------------------------------------------------------- agents
+
+/** Sessions an agent opened that already have a tab. */
+const agentTabs = new Set<string>();
+
+/** Shows a session an agent opened in a tab of its own. It does not take the screen from what you are doing, but it flags itself. */
+function openAgentTab(e: AgentSessionEvent) {
+  if (agentTabs.has(e.session)) return;
+  agentTabs.add(e.session);
+  const p = findProfile(e.profile) ?? { ...blankProfile(), id: e.profile, name: e.name, protocol: e.protocol };
+  const tab = register(Tab.createForAgent(p, e.session, e.client));
+  tab.header.classList.add("unread");
+  if (!active) activate(tab);
+}
+
+const agentMode = (p: Profile) => settings.agent.profiles[p.id] ?? "off";
+
+/** Asks how far agents may go on a profile and remembers the answer. */
+async function agentAccess(p: Profile) {
+  const mode = await agentAccessDialog(p, agentMode(p), settings.agent.enabled);
+  if (mode === null) return;
+  if (mode === "off") delete settings.agent.profiles[p.id];
+  else settings.agent.profiles[p.id] = mode;
+}
+
+/** Sessions agents opened before this page was ready (the server can start before the window has loaded). */
+async function showOpenAgentSessions() {
+  const status = await api.agentStatus().catch(() => null);
+  for (const s of status?.sessions ?? []) {
+    if (s.phase !== "ended") openAgentTab({ session: s.session, profile: s.profile, name: s.name, protocol: s.protocol, client: s.client });
+  }
+}
+
 function splitActive(dir: Dir, p?: Profile) {
   if (active instanceof Tab) active.split(dir, p);
 }
@@ -483,7 +523,14 @@ function tabMenu(tab: AnyTab): MenuEntries {
   if (tab instanceof FileTab) return [{ label: "Close tab", action: () => closeTab(tab) }];
   if (tab instanceof ApiTab) return [...tab.menuEntries(), null, { label: "Close tab", action: () => closeTab(tab) }];
   const on = (f: () => void) => () => { activate(tab); f(); };
+  const agent = tab.focused;
   return [
+    ...(agent.agentSession ? [
+      agent.controller === "user"
+        ? { label: "Hand the terminal back to the agent", action: () => agent.handBack() }
+        : { label: "Pause the agent (take over)", action: () => agent.pauseAgent() },
+      null,
+    ] : []),
     ...(tab.focused.profile.protocol === "ssh" ? [{ label: "Open file browser for this host", action: () => openFiles(tab.focused.profile) }, null] : []),
     { label: "Split right", hint: "Ctrl+Shift+D", action: on(() => tab.split("row")) },
     { label: "Split down", hint: "Ctrl+Shift+E", action: on(() => tab.split("col")) },
@@ -633,6 +680,17 @@ function paletteItems(): PaletteItem[] {
     add("This tab", "save-quick", `Save ${p.name} as a profile…`, () => void saveQuick(p), { keywords: "quick connect keep" });
   }
 
+  // Agents: what the focused terminal allows, and how to connect one.
+  if (tab) {
+    const term = tab.focused;
+    if (term.agentSession) add("This tab", "agent-pause", term.controller === "user" ? "Hand the terminal back to the agent" : "Pause the agent (take over)", () => (term.controller === "user" ? term.handBack() : term.pauseAgent()), { keywords: "ai mcp" });
+    if (term.profile.protocol !== "api" && !isQuick(term.profile)) add("This tab", "agent-access", `Agent access for ${term.profile.name}…`, () => void agentAccess(term.profile), { keywords: "ai mcp allow permit" });
+  }
+  if (settings.agent.enabled) {
+    add("Agents", "agent-connect", "Connect an agent…", () => void agentConfigDialog(), { keywords: "ai mcp model context protocol configuration token" });
+    add("Agents", "agent-activity", "Agent activity…", () => void agentActivityDialog(), { keywords: "ai mcp log history commands" });
+  }
+
   // The toolbox: one row in the default list, every tool when typing ("port", "hash", "subnet"…).
   add("Toolbox", "toolbox", "Toolbox…", () => showPalette("commands", "Toolbox "), { only: "browse", subtitle: "port check, DNS, passwords, converters and more", keywords: "tools utilities" });
   for (const t of TOOLS) add("Toolbox", `tool:${t.id}`, t.title, () => void openTool(t), { only: "search", subtitle: t.hint, keywords: t.keywords });
@@ -648,7 +706,7 @@ function paletteItems(): PaletteItem[] {
   add("Appearance", "ui-colours", "Interface colours…", () => void chromeDialog(settings.ui).then((ui) => { if (ui) settings.ui = ui; }));
   add("Appearance", "themes", "Terminal colour themes…", async () => { await themeDialog("portique-nuit"); await loadThemes(); renderProfiles(); });
   for (const n of PRESET_NAMES) add("Appearance", `preset:${n}`, `Interface look: ${n}`, () => void applyPreset(n));
-  add("App", "settings", "Settings…", () => void openSettings(), { keywords: "preferences hotkey startup font size gpu drop-down" });
+  add("App", "settings", "Settings…", () => void openSettings(), { keywords: "preferences hotkey startup font size gpu drop-down agent mcp" });
   add("App", "gpu", `${settings.gpu ? "Turn off" : "Turn on"} GPU rendering`, () => void toggleGpu());
   add("App", "quake", `${settings.quake ? "Turn off" : "Turn on"} drop-down mode (${settings.quakeKey})`, () => void toggleQuake());
   return out;
@@ -757,8 +815,8 @@ window.addEventListener("keydown", (e) => {
 
 // ---------------------------------------------------------------- workspaces
 
-/** File browsers aren't saved in workspaces (they would reconnect on launch). */
-const terminalTabs = () => tabs.filter((t): t is Tab => t instanceof Tab);
+/** File browsers aren't saved in workspaces (they would reconnect on launch), and neither are agents' sessions (they end with the app). */
+const terminalTabs = () => tabs.filter((t): t is Tab => t instanceof Tab && !t.hasAgent);
 
 /** Persist the open layout shortly after it changes (and the saved workspaces along with it). */
 let persistTimer: number | undefined;
@@ -861,6 +919,7 @@ for (const ev of ["keydown", "mousedown", "wheel"]) {
 }
 setUnlockHook(ensureUnlocked);
 void listen("vault-locked", () => ensureUnlocked());
+watchAgents(openAgentTab);
 
 activate(null);
 const settingsLoaded = api.getSettings().then((s) => {
@@ -876,4 +935,5 @@ void ensureUnlocked().then(async () => {
   if (settings.restoreTabs) restoreLast();
   ready = true;
   renderProfiles();
+  void showOpenAgentSessions();
 });

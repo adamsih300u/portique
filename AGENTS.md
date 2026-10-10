@@ -23,8 +23,8 @@ Portique is a Tauri 2 desktop app (Rust backend, plain TypeScript interface, no 
 ## Where things live
 
 ```
-src/            interface: main.ts (shell), api.ts (calls into Rust), *-tab.ts (tabs), http-*.ts (API client), editors.ts (dialogs), chrome.ts (looks), styles.css
-src-tauri/src/  backend: lib.rs (commands), session.rs, ssh.rs, tunnel.rs, sftp.rs, telnet.rs, serial.rs, local.rs, toolbox.rs, http.rs, store.rs, vault.rs, keys.rs, window.rs
+src/            interface: main.ts (shell), api.ts (calls into Rust), *-tab.ts (tabs), http-*.ts (API client), agent-*.ts (agent access), editors.ts (dialogs), chrome.ts (looks), styles.css
+src-tauri/src/  backend: lib.rs (commands), session.rs, ssh.rs, tunnel.rs, sftp.rs, telnet.rs, serial.rs, local.rs, toolbox.rs, http.rs, agent/ (the MCP server), store.rs, vault.rs, keys.rs, window.rs
 docs/           guides; docs/changes/ has one file per change
 ```
 
@@ -81,5 +81,9 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - **An older `vault.bin` is refused** until the person confirms; the vault carries a save counter and each computer remembers the highest it opened in `vault.seen`. Never store that note beside `vault.bin`. → [ADR-0013](docs/adr/0013-older-vault-is-refused.md)
 - **Vault secrets are sealed in memory** and opened one at a time with `Vault::get`, which returns a self-wiping `Zeroizing<String>`. Don't hold one longer than the call needs, and don't add a way to open them all. → [ADR-0014](docs/adr/0014-secrets-sealed-in-memory.md)
 - **Vault keys go in `LockedKey`, and secrets arrive as `Zeroizing<String>`.** A key never sits in an ordinary buffer, and a password a command receives is wrapped so it is wiped on drop. The master password is sent as raw bytes (`ipc.rs`, `secret-ipc.ts`), not JSON; keep any new command that takes it on that path. → [ADR-0015](docs/adr/0015-keys-pinned-and-process-hardened.md)
+- **Agent access is off by default and set per profile**, in `settings.json` by profile id, never in the profile. An agent sees only profiles that are on and uses only sessions it opened itself. → [ADR-0016](docs/adr/0016-agent-access-is-off-and-per-profile.md)
+- **The agent server lives in the app, on loopback only**, behind a per-start token and `Host`/`Origin` checks; `portique mcp` bridges stdio to it. → [ADR-0017](docs/adr/0017-agent-server-in-the-app-on-loopback.md)
+- **An agent's command ends with markers typed around it in the open shell** (POSIX shells only); the person can see it and take the keyboard. The activity log stays in memory. → [ADR-0018](docs/adr/0018-commands-finish-with-markers-in-the-open-shell.md)
+- **An agent's first step in a session needs the master password** (while a vault exists and the one setting is on): it is checked in Rust, a plain answer cannot grant it, and locking the vault ends it. → [ADR-0019](docs/adr/0019-an-agents-first-step-needs-the-master-password.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.

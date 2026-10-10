@@ -8,19 +8,32 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use zeroize::Zeroizing;
 
-/// Frames sent to the frontend: first byte 0 = terminal data, 1 = JSON status.
+/// Frames sent to a listener: first byte 0 = terminal data, 1 = JSON status.
+///
+/// The listener is usually the page, over a Tauri `Channel`; `Emitter::sink` points a session at Rust
+/// code instead (an agent's session, see `agent/`), which receives the same frames.
 #[derive(Clone)]
-pub struct Emitter(Channel<InvokeResponseBody>);
+pub struct Emitter(Arc<dyn Fn(Vec<u8>) + Send + Sync>);
 
 impl Emitter {
     pub fn new(c: Channel<InvokeResponseBody>) -> Self {
-        Self(c)
+        Self(Arc::new(move |frame| {
+            let _ = c.send(InvokeResponseBody::Raw(frame));
+        }))
+    }
+    /// Sends every frame, built as for the page, to `f`.
+    pub fn sink(f: impl Fn(Vec<u8>) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+    /// Passes on a frame that was built already.
+    pub fn frame(&self, f: Vec<u8>) {
+        (self.0)(f);
     }
     pub fn data(&self, d: &[u8]) {
         let mut v = Vec::with_capacity(d.len() + 1);
         v.push(0);
         v.extend_from_slice(d);
-        let _ = self.0.send(InvokeResponseBody::Raw(v));
+        (self.0)(v);
     }
     /// state: connecting | connected | vault-locked | closed | lost | error | need-password | need-passphrase | tunnels
     /// Like `status`, but `message` is a JSON document the frontend parses itself.
@@ -30,7 +43,7 @@ impl Emitter {
     pub fn status(&self, state: &str, message: &str) {
         let mut v = vec![1u8];
         v.extend_from_slice(json!({ "state": state, "message": message }).to_string().as_bytes());
-        let _ = self.0.send(InvokeResponseBody::Raw(v));
+        (self.0)(v);
     }
 }
 

@@ -31,6 +31,7 @@ docs/           guides, and one file per change in docs/changes/
 | SFTP file browser tab | `file-tab.ts` |
 | API client | `api-tab.ts` (the tab), `http-request.ts` (one request), `api-connection.ts` (connection form), `http-model.ts` (types, address and header rules, curl), `http-checks.ts`, `http-import.ts`, `http-transfer.ts`, `http-store.ts`, `http-env.ts`, `http-proxy.ts` |
 | Dialogs: profile editor, keys, themes, settings, vault | `editors.ts`, `settings-ui.ts`, `vault-ui.ts`, `host-prompts.ts` |
+| Agent access: the question, access, activity and connect dialogs, and the settings block (`agent-ui.ts`); their wording and tests (`agent-core.ts`) | `agent-ui.ts`, `agent-core.ts` |
 | Building blocks: DOM helper and modal, context menu, command palette | `ui.ts`, `menu.ts`, `palette.ts` |
 | Palette Toolbox: the tool list and dialog (`toolbox.ts`), their logic and tests (`toolbox-core.ts`) | `toolbox.ts`, `toolbox-core.ts` |
 | Palette server tools: commands run on the connected host. Running them and telling Windows from the rest (`server-run.ts`); facts, processes and disk use (`server-tools.ts`, readers in `server-tools-core.ts`); services, containers and logs (`server-operate.ts`, scripts and readers in `server-services-core.ts`); putting a vault key's public half on a host (`server-keys-core.ts`) | `server-run.ts`, `server-tools.ts`, `server-operate.ts` and the three `-core.ts` files |
@@ -50,6 +51,7 @@ docs/           guides, and one file per change in docs/changes/
 | `local.rs` | Shells on this computer (cmd, PowerShell, WSL, Linux shells) run on a pseudo-terminal |
 | `toolbox.rs` | The Toolbox's network checks: name lookup, port check, TCP ping, Wake-on-LAN |
 | `http.rs` | The API client's HTTP engine: variables, OAuth, proxy |
+| `agent/` | The MCP server that lets agents use terminals: `mod.rs` (policy, registry, activity log), `ops.rs` (the operations behind each tool), `mcp.rs` (JSON-RPC and the tool list), `server.rs` (loopback HTTP, token and origin checks), `shim.rs` (`portique mcp`, the stdio bridge), `session.rs`, `transcript.rs` (history, screen, text cleaning), `exec.rs` (command markers and keys), `approval.rs` |
 | `store.rs` | Profiles, themes and the config folder |
 | `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys (`keys::public` gives out only a key's public half) |
 | `window.rs` | Settings, drop-down mode, opening links |
