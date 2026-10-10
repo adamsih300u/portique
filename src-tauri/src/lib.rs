@@ -1,4 +1,5 @@
 mod http;
+mod ipc;
 mod keys;
 mod local;
 mod memguard;
@@ -204,23 +205,34 @@ fn vault_status() -> VaultStatus {
     VaultStatus { exists: v.exists(), unlocked: v.is_unlocked(), min_password_len: vault::MIN_PASSWORD_LEN }
 }
 
+/// Exactly `N` secrets from a request whose body is raw bytes (see `ipc.rs`). The commands that
+/// take the master password use this instead of JSON arguments.
+fn take_secrets<const N: usize>(request: &tauri::ipc::Request<'_>) -> Res<[Zeroizing<String>; N]> {
+    ipc::secrets(request, N)?.try_into().map_err(|_| "malformed secret payload".to_string())
+}
+
 /// Live strength rating for the password dialogs. The backend re-checks on create and change.
 #[tauri::command]
-fn vault_password_strength(password: Zeroizing<String>) -> vault::Strength {
-    vault::assess(&password)
+fn vault_password_strength(request: tauri::ipc::Request<'_>) -> Res<vault::Strength> {
+    let [password] = take_secrets::<1>(&request)?;
+    Ok(vault::assess(&password))
 }
 
 /// Argon2 is deliberately slow and memory-hungry, so run it off the UI thread.
 #[tauri::command]
-async fn vault_create(password: Zeroizing<String>) -> Res<()> {
+async fn vault_create(request: tauri::ipc::Request<'_>) -> Res<()> {
+    let [password] = take_secrets::<1>(&request)?;
     tauri::async_runtime::spawn_blocking(move || vault::global().create(&password, vault::Kdf::DEFAULT))
         .await
         .map_err(|e| e.to_string())?
         .map_err(err)
 }
 
+/// `accept-older` is not a secret, so it travels as a header.
 #[tauri::command]
-async fn vault_unlock(password: Zeroizing<String>, accept_older: bool) -> Res<()> {
+async fn vault_unlock(request: tauri::ipc::Request<'_>) -> Res<()> {
+    let [password] = take_secrets::<1>(&request)?;
+    let accept_older = ipc::header(&request, "accept-older") == Some("true");
     tauri::async_runtime::spawn_blocking(move || vault::global().unlock(&password, accept_older))
         .await
         .map_err(|e| e.to_string())?
@@ -237,8 +249,10 @@ fn vault_touch() {
     vault::global().touch();
 }
 
+/// The old password, then the new one.
 #[tauri::command]
-async fn vault_change_password(old: Zeroizing<String>, new: Zeroizing<String>) -> Res<()> {
+async fn vault_change_password(request: tauri::ipc::Request<'_>) -> Res<()> {
+    let [old, new] = take_secrets::<2>(&request)?;
     tauri::async_runtime::spawn_blocking(move || vault::global().change_password(&old, &new))
         .await
         .map_err(|e| e.to_string())?
