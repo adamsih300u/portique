@@ -8,7 +8,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { api, Channel, Profile } from "./api";
-import { getTheme, xtermTheme } from "./themes";
+import { effectiveFont, getTheme, xtermTheme } from "./themes";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
 import { toBytes } from "./ui";
 import { ensureUnlocked } from "./vault-ui";
@@ -149,7 +149,7 @@ export class TerminalTab {
   private options(p: Profile) {
     const a = p.appearance;
     return {
-      fontFamily: a.fontFamily,
+      fontFamily: effectiveFont(a),
       fontSize: a.fontSize,
       cursorStyle: a.cursorStyle,
       cursorBlink: a.cursorBlink,

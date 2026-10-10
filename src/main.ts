@@ -13,7 +13,7 @@ import { contextMenu, MenuEntries, menuOn } from "./menu";
 import { Arrow, Dir, Layout, Tab } from "./panes";
 import { shellIntegrationDialog } from "./shell-integration";
 import { TerminalTab } from "./terminal-tab";
-import { ensureFont, getTheme, loadThemes } from "./themes";
+import { effectiveFont, ensureFont, getTheme, loadThemes } from "./themes";
 import { toggleHelp } from "./help";
 import { settingsDialog } from "./settings-ui";
 import { FindTarget, openPalette, PaletteItem } from "./palette";
@@ -217,7 +217,7 @@ async function edit(p: Profile) {
   const saved = await editProfile(p);
   if (!saved) return;
   await refresh();
-  await ensureFont(saved.appearance.fontFamily, saved.appearance.fontSize);
+  await ensureFont(effectiveFont(saved.appearance), saved.appearance.fontSize);
   for (const t of tabs) t.applyProfile(saved);
 }
 
