@@ -403,7 +403,7 @@ export class RequestEditor {
             basic: () => [mk("Username", "user"), mk("Password", "pass", true)],
             header: () => [mk("Header name", "name", false, "X-API-Key"), mk("Value", "value", false, "{{apiKey}}")],
             oauth2: () => [mk("Token URL", "tokenUrl", false, "https://login.example.com/oauth/token"), mk("Client ID", "clientId", false, "{{clientId}}"), mk("Client secret", "clientSecret", true, "{{clientSecret}}"), mk("Scope (optional)", "scope"),
-              note("Portique signs in for you when you press Send, keeps the token until it expires, and signs in again if the API refuses it.")],
+              note("Portique signs in for you when you press Send, keeps the token until it expires, and, if the API refuses it, signs in again on your next Send.")],
           }[a.kind]()), ...(a.kind === "none" || a.kind === "inherit" ? [] : [note("Tip: put the secret in an environment and enter it here as ", h("code", {}, "{{name}}"), ", so it stays in the vault and out of saved requests.")]));
         };
         kind.addEventListener("change", () => { r.auth.kind = kind.value as AuthKind; draw(); this.changed(); });

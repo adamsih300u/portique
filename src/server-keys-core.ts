@@ -48,7 +48,7 @@ echo '@@count'; grep -c . "$f"
 
 /** What the person is told before they confirm. */
 export function planInstallKey(k: KeyInfo): string {
-  return `Will add the public key of "${k.name}" (${k.algorithm}, ${k.fingerprint}) to ~/.ssh/authorized_keys on the server, unless it is already there.\n\nIt creates ~/.ssh (mode 700) and the file (mode 600) if they are missing, appends one line and changes nothing else. Only the public half is sent; the private key stays in the vault.`;
+  return `Will add the public key of "${k.name}" (${k.algorithm}, ${k.fingerprint}) to ~/.ssh/authorized_keys on the server, unless it is already there.\n\nIt creates ~/.ssh and the file if they are missing and sets them to mode 700 and 600, appends one line, and changes nothing else. Only the public half is sent; the private key stays in the vault.`;
 }
 
 export function formatInstallKey(text: string, name: string): string {
