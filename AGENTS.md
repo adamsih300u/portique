@@ -41,11 +41,14 @@ The full file-by-file table is in [CONTRIBUTING.md](CONTRIBUTING.md#how-the-code
 
     npm install
     npx tsc --noEmit                                         # type-check (CI runs this)
+    npm run lint                                             # eslint (CI runs this)
+    npm test                                                 # interface unit tests (CI runs these)
     cargo test --manifest-path src-tauri/Cargo.toml --lib    # backend tests (CI runs these)
+    cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings   # CI runs this
     npm run build                                            # interface bundle
     npm run tauri dev                                        # run the app
 
-Windows executable from Linux: see [CONTRIBUTING.md](CONTRIBUTING.md#a-windows-build-from-linux). There is no interface test runner yet; for visual changes, serve `npx vite preview` in a headless browser with a mocked `window.__TAURI_INTERNALS__` and check each interface look, a light one especially. Say in the change file what you did and did not run. Don't claim something works on Windows or against a real SSH server unless you ran it there.
+Windows executable from Linux: see [CONTRIBUTING.md](CONTRIBUTING.md#a-windows-build-from-linux). Logic that doesn't need a window has unit tests in `src/*.test.ts`; there is no test runner for the screens, so for visual changes serve `npx vite preview` in a headless browser with a mocked `window.__TAURI_INTERNALS__` and check each interface look, a light one especially. Say in the change file what you did and did not run. Don't claim something works on Windows or against a real SSH server unless you ran it there.
 
 ## Doing a change
 
@@ -73,5 +76,7 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - **The README is short.** Detail goes in `docs/`; long PR descriptions go in `docs/changes/`. → [ADR-0008](docs/adr/0008-short-readme.md)
 - **Italic is for the app's voice** (wordmark, tagline, empty-state messages); controls and labels are upright, and category labels are serif small-caps. → [ADR-0009](docs/adr/0009-italic-is-the-apps-voice.md)
 - A **local terminal** starts only from a shell Rust found, by id, and only when the settings turn it on; the interface never names a program. → [ADR-0010](docs/adr/0010-local-shells-start-by-id.md)
+- **Server tools run beside the shell**, on a new channel of its connection, only while it is connected; a person must be able to see what a tool will change before it runs. → [ADR-0011](docs/adr/0011-server-commands-run-beside-the-shell.md)
+- A server tool that **changes** something declares an `action`: the dialog shows the exact command first, nothing runs until the person presses the button, and root comes only from `sudo -n`; no tool enters a password. → [ADR-0012](docs/adr/0012-server-changes-show-their-command-first.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.

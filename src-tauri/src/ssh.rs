@@ -13,7 +13,8 @@ use russh::{
     ChannelMsg, Disconnect,
 };
 use serde_json::json;
-use std::{collections::HashMap, future::Future, pin::Pin, sync::{Arc, Mutex}, time::Duration};
+use serde::Serialize;
+use std::{collections::HashMap, future::Future, pin::Pin, sync::{Arc, LazyLock, Mutex}, time::Duration};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 type KnownHosts = HashMap<String, String>;
@@ -186,6 +187,80 @@ fn dial<'a>(
     })
 }
 
+/// The logged-in connection of each open shell, by session id, so a one-off command can run beside the shell.
+static EXEC: LazyLock<Mutex<HashMap<String, Arc<Handle<Handler>>>>> = LazyLock::new(Default::default);
+
+/// Keeps a connection in `EXEC` until the session ends, however it ends.
+struct ExecRegistration(String);
+
+impl ExecRegistration {
+    fn new(sid: &str, session: &Arc<Handle<Handler>>) -> Self {
+        EXEC.lock().unwrap_or_else(|p| p.into_inner()).insert(sid.to_string(), session.clone());
+        Self(sid.to_string())
+    }
+}
+
+impl Drop for ExecRegistration {
+    fn drop(&mut self) {
+        EXEC.lock().unwrap_or_else(|p| p.into_inner()).remove(&self.0);
+    }
+}
+
+/// Most output of one command that is kept; the rest is dropped and `truncated` is set.
+const EXEC_MAX_OUT: usize = 1 << 20;
+const EXEC_MAX_SECS: u64 = 120;
+
+#[derive(Serialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecOut {
+    pub stdout: String,
+    pub stderr: String,
+    /// The exit status, if the server sent one.
+    pub code: Option<u32>,
+    pub truncated: bool,
+}
+
+fn push_capped(buf: &mut Vec<u8>, data: &[u8], truncated: &mut bool) {
+    let room = EXEC_MAX_OUT.saturating_sub(buf.len());
+    if data.len() > room {
+        *truncated = true;
+    }
+    buf.extend_from_slice(&data[..data.len().min(room)]);
+}
+
+/// Runs one command on the server of the open shell `sid`, on a new channel of the same connection
+/// (no second login). `stdin`, if given, is sent to it and then closed: a script for `sh` goes this way, which
+/// needs no quoting and does not depend on the account's login shell. Waits for it to finish, at most `secs` seconds.
+pub async fn exec(sid: &str, command: &str, stdin: Option<&str>, secs: u64) -> Result<ExecOut> {
+    let session = EXEC.lock().unwrap_or_else(|p| p.into_inner()).get(sid).cloned().context("this session is not connected")?;
+    let secs = secs.clamp(1, EXEC_MAX_SECS);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let mut ch = session.channel_open_session().await.map_err(|_| anyhow!("the connection is gone; reconnect and try again"))?;
+    ch.exec(true, command).await?;
+    if let Some(input) = stdin {
+        ch.data(input.as_bytes()).await?;
+        ch.eof().await?;
+    }
+    let (mut out, mut err, mut code, mut truncated) = (Vec::new(), Vec::new(), None, false);
+    loop {
+        let msg = match tokio::time::timeout_at(deadline, ch.wait()).await {
+            Ok(m) => m,
+            Err(_) => {
+                let _ = ch.close().await;
+                bail!("The command took longer than {secs} seconds and was stopped");
+            }
+        };
+        match msg {
+            Some(ChannelMsg::Data { data }) => push_capped(&mut out, &data, &mut truncated),
+            Some(ChannelMsg::ExtendedData { data, ext: 1 }) => push_capped(&mut err, &data, &mut truncated),
+            Some(ChannelMsg::ExitStatus { exit_status }) => code = Some(exit_status),
+            Some(ChannelMsg::Close) | None => break,
+            _ => {}
+        }
+    }
+    Ok(ExecOut { stdout: String::from_utf8_lossy(&out).into_owned(), stderr: String::from_utf8_lossy(&err).into_owned(), code, truncated })
+}
+
 pub async fn run(p: &Profile, params: Params, em: Emitter, mut rx: UnboundedReceiver<Ctl>) -> Result<()> {
     let port = if p.port == 0 { 22 } else { p.port };
     let remote = RemoteMap::default();
@@ -196,6 +271,7 @@ pub async fn run(p: &Profile, params: Params, em: Emitter, mut rx: UnboundedRece
     em.status("connected", &format!("Connected to {}:{port}", p.host));
 
     let session = Arc::new(session);
+    let _exec = ExecRegistration::new(&params.sid, &session);
     let (_tunnels, report) = tunnel::start(&session, &p.forwards, &remote).await;
     if !report.is_empty() {
         let items: Vec<_> = report.iter().map(|s| json!({ "label": s.label, "error": s.error })).collect();
@@ -333,6 +409,78 @@ mod tests {
     use crate::store::{AuthMethod, Profile};
     use std::sync::Mutex as StdMutex;
     use tauri::ipc::{Channel, InvokeResponseBody};
+
+    #[test]
+    fn output_is_capped_and_flagged() {
+        let (mut buf, mut truncated) = (Vec::new(), false);
+        push_capped(&mut buf, &vec![b'a'; EXEC_MAX_OUT - 1], &mut truncated);
+        assert!(!truncated);
+        push_capped(&mut buf, b"bcd", &mut truncated);
+        assert!(truncated);
+        assert_eq!(buf.len(), EXEC_MAX_OUT);
+        assert_eq!(buf.last(), Some(&b'b'));
+        push_capped(&mut buf, b"x", &mut truncated);
+        assert_eq!(buf.len(), EXEC_MAX_OUT);
+    }
+
+    #[tokio::test]
+    async fn exec_needs_an_open_session() {
+        let err = exec("no-such-session", "true", None, 5).await.unwrap_err();
+        assert!(err.to_string().contains("not connected"), "got: {err:#}");
+    }
+
+    /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER, PORTIQUE_TEST_SSH_KEY.
+    /// Opens a shell session, runs commands beside it, and checks the connection is released on close.
+    #[tokio::test]
+    #[ignore]
+    async fn exec_beside_a_shell_against_local_sshd() {
+        let env = |k: &str| std::env::var(k).unwrap();
+        let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let key = keys::import("test", &pem, None).unwrap();
+        let p = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
+            auth_method: AuthMethod::Key, key_id: Some(key.id.clone()), ..Default::default()
+        };
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "ex".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move {
+            for _ in 0..50 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                sessions.answer_host("ex", true);
+            }
+        });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn({ let em = Emitter::new(Channel::new(|_| Ok(()))); async move { run(&p, params, em, rx).await } });
+        for _ in 0..50 {
+            if EXEC.lock().unwrap().contains_key("ex") { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let r = exec("ex", "echo out-$((6*7)); echo oops >&2; exit 3", None, 10).await.unwrap();
+        assert_eq!((r.stdout.as_str(), r.stderr.as_str(), r.code, r.truncated), ("out-42\n", "oops\n", Some(3), false));
+        // Two at once, on the same connection.
+        let (a, b) = tokio::join!(exec("ex", "sleep 1; echo a", None, 10), exec("ex", "echo b", None, 10));
+        assert_eq!((a.unwrap().stdout, b.unwrap().stdout), ("a\n".to_string(), "b\n".to_string()));
+        // A command that outlives its time is stopped, and the connection still works afterwards.
+        let started = std::time::Instant::now();
+        let err = exec("ex", "sleep 30", None, 1).await.unwrap_err();
+        assert!(err.to_string().contains("longer than 1 seconds"), "got: {err:#}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(exec("ex", "echo still-here", None, 10).await.unwrap().stdout, "still-here\n");
+        // A script on stdin runs under sh, whatever the login shell is, and its exit status comes back.
+        let r = exec("ex", "sh", Some("echo from-stdin-$((1+2))\nexit 4\n"), 10).await.unwrap();
+        assert_eq!((r.stdout.as_str(), r.code), ("from-stdin-3\n", Some(4)));
+        // More output than the cap is cut off and flagged.
+        let big = exec("ex", "head -c 2000000 /dev/zero | tr '\\0' x", None, 20).await.unwrap();
+        assert!(big.truncated && big.stdout.len() == EXEC_MAX_OUT);
+
+        tx.send(Ctl::Close).unwrap();
+        task.await.unwrap().unwrap();
+        assert!(!EXEC.lock().unwrap().contains_key("ex"));
+        assert!(exec("ex", "true", None, 5).await.is_err());
+        keys::delete(&key.id).unwrap();
+    }
 
     /// Needs two running sshd instances (jump + target): set PORTIQUE_TEST_SSH_PORT (target),
     /// PORTIQUE_TEST_JUMP_PORT, PORTIQUE_TEST_SSH_USER, PORTIQUE_TEST_SSH_KEY. Run with XDG_CONFIG_HOME

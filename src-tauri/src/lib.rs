@@ -269,6 +269,12 @@ fn list_keys() -> Res<Vec<keys::KeyInfo>> {
     keys::list().map_err(err)
 }
 
+/// The public half of a key in the vault, for putting on a server. Nothing secret is returned.
+#[tauri::command]
+fn key_public(id: String) -> Res<keys::PublicKey> {
+    keys::public(&id).map_err(err)
+}
+
 #[tauri::command]
 fn import_key(name: String, pem: String, passphrase: Option<String>) -> Res<keys::KeyInfo> {
     keys::import(&name, &pem, passphrase.as_deref().filter(|s| !s.is_empty())).map_err(err)
@@ -571,6 +577,13 @@ async fn tool_wake(mac: String, broadcast: String) -> Res<String> {
     toolbox::wake(&mac, &broadcast).await.map_err(err)
 }
 
+/// Runs one command on the server of an open SSH shell, beside it. The interface can already type into that
+/// shell, so this gives it nothing more; it just returns the output instead of drawing it in a terminal.
+#[tauri::command]
+async fn ssh_exec(session: String, command: String, stdin: Option<String>, timeout_secs: Option<u64>) -> Res<ssh::ExecOut> {
+    ssh::exec(&session, &command, stdin.as_deref(), timeout_secs.unwrap_or(30)).await.map_err(err)
+}
+
 #[tauri::command]
 fn local_home() -> String {
     sftp::local_home()
@@ -631,6 +644,7 @@ pub fn run() {
             tool_ports,
             tool_tcp_ping,
             tool_wake,
+            ssh_exec,
             vault_status,
             vault_create,
             vault_unlock,
@@ -662,6 +676,7 @@ pub fn run() {
             has_password,
             list_keys,
             import_key,
+            key_public,
             delete_key,
             forget_host,
             list_serial_ports,

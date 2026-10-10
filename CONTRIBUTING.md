@@ -33,23 +33,25 @@ docs/           guides, and one file per change in docs/changes/
 | Dialogs: profile editor, keys, themes, settings, vault | `editors.ts`, `settings-ui.ts`, `vault-ui.ts`, `host-prompts.ts` |
 | Building blocks: DOM helper and modal, context menu, command palette | `ui.ts`, `menu.ts`, `palette.ts` |
 | Palette Toolbox: the tool list and dialog (`toolbox.ts`), their logic and tests (`toolbox-core.ts`) | `toolbox.ts`, `toolbox-core.ts` |
+| Palette server tools: commands run on the connected host. Running them and telling Windows from the rest (`server-run.ts`); facts, processes and disk use (`server-tools.ts`, readers in `server-tools-core.ts`); services, containers and logs (`server-operate.ts`, scripts and readers in `server-services-core.ts`); putting a vault key's public half on a host (`server-keys-core.ts`) | `server-run.ts`, `server-tools.ts`, `server-operate.ts` and the three `-core.ts` files |
 | Looks: interface colours, terminal themes, emblem | `chrome.ts`, `themes.ts`, `emblem.ts` |
-| Everything else | `help.ts` (shortcut panel), `shell-integration.ts`, `window-controls.ts` |
+| Sidebar and palette helpers | `sidebar-layout.ts` (width and collapse), `proto-icon.ts` (the icons), `quick-connect.ts` (reading an address typed into the palette), `saved-commands.ts` (a profile's commands and their `{{values}}`) |
+| Everything else | `help.ts` (shortcut panel), `shell-integration.ts`, `window-controls.ts`, and `assets/` (bundled fonts and images) |
 | All styling | `styles.css` (colours are CSS variables such as `--bg`, `--accent`, `--ok`) |
 
 ### Backend (`src-tauri/src/`)
 
 | File | What it does |
 |---|---|
-| `lib.rs` | Registers the Tauri commands the interface can call, and app start-up |
+| `main.rs`, `lib.rs` | Start-up, and the Tauri commands the interface can call |
 | `session.rs` | Running sessions and the frames they stream to the interface |
-| `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells, jump hosts, port forwards, the local SOCKS proxy, SFTP |
+| `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells (and one-off commands beside them), jump hosts, port forwards, the local SOCKS proxy, SFTP |
 | `telnet.rs`, `serial.rs` | The other two network and serial terminal protocols |
 | `local.rs` | Shells on this computer (cmd, PowerShell, WSL, Linux shells) run on a pseudo-terminal |
 | `toolbox.rs` | The Toolbox's network checks: name lookup, port check, TCP ping, Wake-on-LAN |
 | `http.rs` | The API client's HTTP engine: variables, OAuth, proxy |
 | `store.rs` | Profiles, themes and the config folder |
-| `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys |
+| `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys (`keys::public` gives out only a key's public half) |
 | `window.rs` | Settings, drop-down mode, opening links |
 
 ### How the two halves talk
@@ -61,17 +63,20 @@ docs/           guides, and one file per change in docs/changes/
 
 ## Running, testing, building
 
-Linux needs: `pkg-config build-essential libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libudev-dev libxdo-dev`.
+You need Node.js 22 and a current stable Rust (CI uses both). Linux also needs: `pkg-config build-essential libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libudev-dev libxdo-dev`.
 
     npm install
     npm run tauri dev                 # run the app
-    npx tsc --noEmit                  # type-check the interface
+    npx tsc --noEmit                  # type-check the interface (npm run typecheck)
+    npm run lint                      # eslint
+    npm test                          # interface unit tests (vitest)
     cargo test --manifest-path src-tauri/Cargo.toml --lib    # backend tests
+    cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
     npm run build                     # build the interface alone
 
-CI runs the type-check and `cargo test`, then builds Linux and Windows. The SSH integration tests are `#[ignore]`d because they need local `sshd` instances (see `src-tauri/src/ssh.rs`); run them with `cargo test -- --ignored` and point `XDG_CONFIG_HOME` at a scratch folder first, because they write a vault.
+CI runs the type-check, lint, `npm test`, clippy and `cargo test`, then builds Linux and Windows. The SSH integration tests are `#[ignore]`d because they need local `sshd` instances (see `src-tauri/src/ssh.rs`); run them with `cargo test -- --ignored` and point `XDG_CONFIG_HOME` at a scratch folder first, because they write a vault.
 
-There is no automated test runner for the interface yet. For visual changes, serve the built interface (`npx vite preview`) in a headless browser with a stand-in for `window.__TAURI_INTERNALS__`, and look at the result in each interface look (a light one especially).
+The interface's logic that doesn't need a window (parsers, formatters, the scripts the server tools send) has unit tests next to it in `src/*.test.ts`. There is no test runner for the screens themselves. For visual changes, serve the built interface (`npx vite preview`) in a headless browser with a stand-in for `window.__TAURI_INTERNALS__`, and look at the result in each interface look (a light one especially).
 
 ### A Windows build from Linux
 
@@ -96,7 +101,7 @@ One-time: `rustup target add x86_64-pc-windows-gnu`, and install `mingw-w64`, `n
 
 ### Dev builds and releases
 
-Every push to `dev` is built and published as a **prerelease** on the Releases page, named for the version the next release will have: `v0.1.1-dev.17`. The Linux (`.tar.gz`, AppImage, `.deb`) and Windows (`.zip`) files carry that version in their names and inside the app, with SHA-256 sums. The newest ten are kept. Pull requests are built too, but only as workflow artifacts.
+Every push to `dev` that changes the code (not one that touches only docs or repository settings) is built and published as a **prerelease** on the Releases page, named for the version the next release will have: `v0.1.1-dev.17`. The Linux (`.tar.gz`, AppImage, `.deb`) and Windows (`.zip`) files carry that version in their names and inside the app, with SHA-256 sums. The newest ten are kept. Pull requests are built too, but only as workflow artifacts.
 
 Merging `dev` into `main` makes release-please open (or update) a release PR that bumps the version in `package.json`, `Cargo.toml`, `Cargo.lock` and `tauri.conf.json` and writes `CHANGELOG.md`. Merging that PR tags the release (`v0.1.1`) and attaches the builds. The version is the dev build's without `-dev.N`, as long as `main` is built from the same commits.
 

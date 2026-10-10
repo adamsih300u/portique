@@ -458,6 +458,11 @@ export class TerminalTab {
     return this.state === "connected";
   }
 
+  /** The id of the live session, for commands that run beside the shell; null when it isn't connected. */
+  get session(): string | null {
+    return this.state === "connected" ? this.sessionId : null;
+  }
+
   /** Types a saved command into the session (as a paste, so a multi-line one is safe); `enter` also runs it. */
   typeCommand(text: string, enter: boolean) {
     if (!this.connected) return;

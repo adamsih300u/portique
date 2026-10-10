@@ -235,6 +235,20 @@ export interface HttpResult {
 /** Profiles saved before API connections or saved commands existed have no settings for them: give every profile well-formed ones. */
 const withDefaults = (p: Profile): Profile => ({ ...p, api: sanitizeApiSettings(p.api), commands: sanitizeCommands(p.commands) });
 
+/** The public half of a vault key: `algorithm base64`, and its fingerprint. */
+export interface PublicKeyInfo {
+  key: string;
+  fingerprint: string;
+}
+
+/** What a command run on a server printed. `code` is its exit status, if the server sent one. */
+export interface ExecOut {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  truncated: boolean;
+}
+
 /** The address a Toolbox network check used, and how each port went. */
 export interface ToolPorts {
   address: string;
@@ -277,6 +291,7 @@ export const api = {
   copyPassword: (fromId: string, toId: string) => guarded(() => invoke<void>("copy_password", { fromId, toId })),
   hasPassword: (profileId: string) => guarded(() => invoke<boolean>("has_password", { profileId })),
   listKeys: () => invoke<KeyInfo[]>("list_keys"),
+  keyPublic: (id: string) => guarded(() => invoke<PublicKeyInfo>("key_public", { id })),
   importKey: (name: string, pem: string, passphrase?: string) =>
     guarded(() => invoke<KeyInfo>("import_key", { name, pem, passphrase: passphrase || null })),
   deleteKey: (id: string) => guarded(() => invoke<void>("delete_key", { id })),
@@ -303,6 +318,8 @@ export const api = {
   toolPorts: (host: string, ports: number[]) => invoke<ToolPorts>("tool_ports", { host, ports }),
   toolTcpPing: (host: string, port: number, count: number) => invoke<ToolPorts>("tool_tcp_ping", { host, port, count }),
   toolWake: (mac: string, broadcast: string) => invoke<string>("tool_wake", { mac, broadcast }),
+  sshExec: (session: string, command: string, stdin?: string, timeoutSecs?: number) =>
+    invoke<ExecOut>("ssh_exec", { session, command, stdin: stdin ?? null, timeoutSecs: timeoutSecs ?? null }),
   localHome: () => invoke<string>("local_home"),
   localList: (path: string) => invoke<Listing>("local_list", { path }),
   localMkdir: (path: string) => invoke<void>("local_mkdir", { path }),
