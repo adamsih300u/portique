@@ -565,11 +565,15 @@ impl Agents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::agent::{approval::Decision, testing::FakeHost};
+    #[cfg(unix)]
     use crate::session::Sessions;
+    #[cfg(unix)]
     use crate::window::{AgentMode, Settings};
 
     /// An agent set up against a fake app that offers a local shell. `mode` is the profile's access.
+    #[cfg(unix)]
     fn setup(shell: &str, mode: AgentMode, patience: Duration) -> (Agents, Arc<FakeHost>, String) {
         let host = Arc::new(FakeHost::default());
         let found = crate::local::find(shell).unwrap_or_else(|| panic!("no {shell} on this computer"));
@@ -583,6 +587,7 @@ mod tests {
         (agents, host, profile.id)
     }
 
+    #[cfg(unix)]
     async fn open(agents: &Agents, profile: &str) -> String {
         let info = agents.open_session("test-agent", profile, Some(100), Some(30)).await.expect("the shell should open");
         assert_eq!(info.phase, Phase::Ready);
@@ -590,11 +595,13 @@ mod tests {
     }
 
     /// Lets the shell print its first prompt (and ask for bracketed paste) before the first command.
+    #[cfg(unix)]
     async fn settled(agents: &Agents, id: &str) {
         let _ = agents.read_output(id, Some(0), None, Some(1500)).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_command_runs_in_a_posix_shell_and_reports_its_status() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -620,10 +627,12 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     fn approval_patience() -> Duration {
         Duration::from_secs(5)
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn bash_takes_the_command_as_one_paste_so_tabs_survive() {
         let (agents, _host, profile) = setup("bash", AgentMode::Allow, approval_patience());
@@ -635,6 +644,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_long_output_keeps_its_two_ends() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -649,6 +659,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_slow_command_returns_while_running_and_can_be_followed() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -668,6 +679,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn an_interrupted_command_does_not_block_the_next() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -682,6 +694,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn typing_reaches_a_program_waiting_for_input() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -696,6 +709,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn wait_for_finds_a_pattern_and_times_out_politely() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -712,6 +726,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_screen_shows_what_a_full_screen_program_draws() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -730,6 +745,7 @@ mod tests {
 
     // ---- who may do what ---------------------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn nothing_opens_while_access_is_off_or_the_profile_is_not_marked() {
         let (agents, host, profile) = setup("sh", AgentMode::Off, approval_patience());
@@ -745,6 +761,7 @@ mod tests {
         assert!(agents.profiles().is_err());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn list_profiles_shows_only_what_is_open_and_no_secrets() {
         let (agents, host, profile) = setup("sh", AgentMode::Ask, approval_patience());
@@ -764,6 +781,7 @@ mod tests {
         assert!(!json.contains("root"), "the user name is not shown: {json}");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn ask_mode_puts_the_exact_command_to_the_person() {
         let (agents, host, profile) = setup("sh", AgentMode::Ask, approval_patience());
@@ -781,6 +799,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn allowing_for_the_session_stops_the_questions() {
         let (agents, host, profile) = setup("sh", AgentMode::Ask, approval_patience());
@@ -794,6 +813,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_no_types_nothing_and_tells_the_agent_not_to_work_around_it() {
         let (agents, host, profile) = setup("sh", AgentMode::Ask, approval_patience());
@@ -820,6 +840,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn no_answer_in_time_types_nothing() {
         let (agents, host, profile) = setup("sh", AgentMode::Ask, Duration::from_millis(150));
@@ -834,6 +855,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn when_the_person_types_the_agent_stops_until_it_is_handed_back() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -854,6 +876,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn taking_over_mid_command_returns_what_has_printed() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -871,6 +894,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn switching_a_profile_off_closes_its_sessions() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -886,6 +910,7 @@ mod tests {
         assert_eq!(s.phase(), Phase::Ended);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_session_that_exits_is_reported_ended_and_stays_readable() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -900,9 +925,11 @@ mod tests {
         assert_eq!(agents.list_sessions().unwrap().len(), 1);
     }
 
+    #[cfg(unix)]
     const PW: &str = "correct horse battery staple";
 
     /// Gives the fake app an open vault with a known password.
+    #[cfg(unix)]
     fn with_vault(host: &FakeHost) {
         let mut v = host.vault.lock().unwrap();
         v.password = Some(PW.into());
@@ -911,6 +938,7 @@ mod tests {
     }
 
     /// Waits for the `n`th question to be shown and returns it.
+    #[cfg(unix)]
     async fn question(host: &FakeHost, n: usize) -> serde_json::Value {
         for _ in 0..400 {
             let all = host.events("agent-approval");
@@ -922,6 +950,7 @@ mod tests {
         panic!("question {n} was never shown");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn with_a_vault_the_first_command_needs_the_master_password_and_the_next_does_not() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -949,6 +978,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn locking_the_vault_takes_the_proof_away() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -976,6 +1006,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn too_many_wrong_passwords_decline_the_request() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -996,6 +1027,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn saying_no_needs_no_password() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -1012,6 +1044,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn in_ask_mode_one_dialog_holds_both_the_password_and_the_yes() {
         let (agents, host, profile) = setup("sh", AgentMode::Ask, approval_patience());
@@ -1034,6 +1067,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_person_can_turn_the_password_check_off() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -1046,6 +1080,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn without_a_vault_there_is_no_password_to_ask_for() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -1057,6 +1092,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn typed_input_is_gated_like_a_command() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -1074,6 +1110,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn turning_allow_down_to_ask_applies_to_a_session_that_is_already_open() {
         let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -1088,6 +1125,7 @@ mod tests {
         agents.close_session(&id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn ended_sessions_do_not_pile_up_even_if_the_agent_never_lists_them() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -1105,6 +1143,7 @@ mod tests {
         assert!(cut.contains("2000 characters in all") && cut.len() < 600, "{}", cut.len());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_number_of_live_sessions_is_capped() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
@@ -1121,6 +1160,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn bad_input_is_refused_before_anything_is_typed() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());

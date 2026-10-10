@@ -314,7 +314,7 @@ pub fn read_endpoint(dir: &std::path::Path) -> Option<(String, String)> {
     Some((url.to_string(), v["token"].as_str()?.to_string()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::agent::testing::FakeHost;

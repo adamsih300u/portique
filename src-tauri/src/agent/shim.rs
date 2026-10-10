@@ -136,7 +136,9 @@ impl Bridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::agent::{server, testing::FakeHost, Agents};
+    #[cfg(unix)]
     use crate::{session::Sessions, window::AgentMode};
 
     /// Runs the bridge on in-memory pipes against a real server and returns what it printed for each line.
@@ -151,6 +153,7 @@ mod tests {
         out
     }
 
+    #[cfg(unix)]
     async fn serve() -> (server::Running, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let host = Arc::new(FakeHost::default());
@@ -166,6 +169,7 @@ mod tests {
         (running, dir)
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn lines_in_replies_out_and_notifications_silent() {
         let (_running, dir) = serve().await;
@@ -185,6 +189,7 @@ mod tests {
         assert_eq!(replies[2]["result"]["structuredContent"]["profiles"][0]["id"], "local:sh");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_loop_reads_lines_and_writes_one_line_per_reply() {
         use tokio::io::AsyncReadExt;
@@ -220,6 +225,7 @@ mod tests {
         assert!(replies[0]["error"]["message"].as_str().unwrap().contains("not running"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_restarted_app_is_found_again_and_the_session_is_remade() {
         let (first, dir) = serve().await;

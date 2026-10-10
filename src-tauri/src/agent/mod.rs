@@ -285,7 +285,7 @@ impl Agents {
     }
 
     /// Whether a session belongs to an agent, and if so whether the person holds the keyboard.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn controller(&self, id: &str) -> Option<&'static str> {
         self.registry().get(id).map(|s| if s.paused() { "user" } else { "agent" })
     }
@@ -531,6 +531,7 @@ pub(crate) mod testing {
     }
 
     impl FakeVault {
+        #[cfg(unix)]
         pub fn lock(&mut self) {
             self.epoch = None;
         }

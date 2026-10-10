@@ -429,7 +429,7 @@ fn tools() -> Vec<Value> {
     ]
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::agent::testing::FakeHost;
