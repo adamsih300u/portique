@@ -1,14 +1,14 @@
 import { api, type Forward, type KeyInfo, newProfile, type Profile, type Protocol, type Theme } from "./api";
 import { type SavedCommand, sanitizeCommands } from "./saved-commands";
 import { apiConnectionForm } from "./api-connection";
-import { allThemes, getTheme, isBuiltin, loadThemes } from "./themes";
+import { allThemes, DEFAULT_FONT, effectiveFont, getTheme, isBuiltin, loadThemes } from "./themes";
 
-const DEFAULT_FONT = "Cascadia Mono, Consolas, 'DejaVu Sans Mono', monospace";
 import { field, h, modal } from "./ui";
 
 const FONTS = [
   "Cascadia Mono", "Cascadia Code", "Consolas", "Fira Code", "JetBrains Mono", "Source Code Pro",
-  "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Hack", "Courier New", "monospace",
+  "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Hack", "IBM Plex Mono", "Inconsolata", "Iosevka",
+  "Roboto Mono", "Noto Sans Mono", "Geist Mono", "Intel One Mono", "Courier New", "monospace",
 ];
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
 const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0, api: 0, local: 0 };
@@ -384,7 +384,7 @@ function appearanceForm(a: Look, hostName: () => string) {
     themeSel.dispatchEvent(new Event("change"));
     renderPreview();
   } }, "Edit themes…");
-  const font = h("input", { value: a.fontFamily, list: "fonts" });
+  const font = h("input", { value: a.fontFamily === DEFAULT_FONT ? "" : a.fontFamily, list: "fonts", placeholder: "Theme default" });
   const fonts = h("datalist", { id: "fonts" }, ...FONTS.map((f) => h("option", { value: f })));
   const size = h("input", { type: "number", value: String(a.fontSize), min: "6", max: "48", step: "0.5" });
   const cursor = select([["block", "Block"], ["underline", "Underline"], ["bar", "Bar"]], a.cursorStyle);
@@ -396,7 +396,7 @@ function appearanceForm(a: Look, hostName: () => string) {
     const t = getTheme(themeSel.value);
     preview.style.background = t.background;
     preview.style.color = t.foreground;
-    preview.style.fontFamily = font.value;
+    preview.style.fontFamily = effectiveFont({ themeId: themeSel.value, fontFamily: font.value });
     preview.style.fontSize = `${Number(size.value) || 14}px`;
     const col = (text: string, color: string) => h("span", { style: `color:${color}` }, text);
     preview.replaceChildren(
@@ -406,18 +406,14 @@ function appearanceForm(a: Look, hostName: () => string) {
     );
   };
   [themeSel, font, size].forEach((e) => e.addEventListener("input", renderPreview));
-  // A theme can carry a font (e.g. SGI's screen font); picking it applies the font too.
+  // A theme can carry a size (e.g. SGI's screen font); picking it applies that. The font family is
+  // only ever the profile's own override, so it is left alone here.
   let prevThemeId = themeSel.value;
   themeSel.addEventListener("change", () => {
     const next = getTheme(themeSel.value);
     const prev = getTheme(prevThemeId);
-    if (next.fontFamily) {
-      font.value = next.fontFamily;
-      if (next.fontSize) size.value = String(next.fontSize);
-    } else if (prev.fontFamily && font.value === prev.fontFamily) {
-      font.value = DEFAULT_FONT; // leaving a font-bearing theme: go back to the default font
-      size.value = "14";
-    }
+    if (next.fontFamily && next.fontSize) size.value = String(next.fontSize);
+    else if (prev.fontFamily && Number(size.value) === prev.fontSize) size.value = "14";
     prevThemeId = themeSel.value;
   });
   renderPreview();
@@ -433,7 +429,7 @@ function appearanceForm(a: Look, hostName: () => string) {
     el,
     refresh: renderPreview,
     read: (): Look => ({
-      themeId: themeSel.value, fontFamily: font.value, fontSize: Number(size.value) || 14,
+      themeId: themeSel.value, fontFamily: font.value.trim(), fontSize: Number(size.value) || 14,
       cursorStyle: cursor.value as Look["cursorStyle"], cursorBlink: blink.checked, ligatures: ligatures.checked, scrollback: Number(scrollback.value) || 0,
     }),
   };
