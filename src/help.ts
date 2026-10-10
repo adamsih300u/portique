@@ -74,7 +74,8 @@ export function toggleHelp(quakeKey: string, quakeOn: boolean) {
         h("span", {}, what))),
     ]));
   open = panel;
-  document.body.append(panel);
+  // Inside the sidebar so it inherits the interface colours, which are set per region rather than on the page.
+  (document.querySelector("aside") ?? document.body).append(panel);
   const away = (e: Event) => {
     if (e.type === "keydown" && (e as KeyboardEvent).key !== "Escape") return;
     if (e.type === "mousedown" && (panel.contains(e.target as Node) || (e.target as HTMLElement).closest?.(".help-link"))) return;
