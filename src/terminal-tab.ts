@@ -103,6 +103,7 @@ export class TerminalTab {
       linkHandler: { activate: openLink, allowNonHttpProtocols: false },
       ...this.options(profile),
     });
+    this.paintHost();
     this.term.loadAddon(this.fit);
     this.term.loadAddon(this.searcher);
     this.searcher.onDidChangeResults((r) => this.onFindResults(r.resultIndex, r.resultCount));
@@ -242,10 +243,16 @@ export class TerminalTab {
     }
   }
 
+  /** The host's padding (text breathing room, taskbar inset) takes the terminal's own background. */
+  private paintHost() {
+    this.el.style.background = this.term.options.theme?.background ?? "";
+  }
+
   /** Re-apply font/colour settings after the profile was edited. */
   applyProfile(p: Profile) {
     this.profile = p;
     Object.assign(this.term.options, this.options(p));
+    this.paintHost();
     this.setLigatures(p.appearance.ligatures);
     this.refit();
   }

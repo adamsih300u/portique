@@ -15,7 +15,7 @@ const ICONS = {
 };
 
 /** An undecorated maximised window on Windows overshoots the work area by its invisible resize
- * border, hiding the bottom rows behind the taskbar. Shrink the app by however far it overshoots. */
+ * border, hiding the bottom rows behind the taskbar. Content stays full-bleed; padding by the overshoot keeps text clear. */
 function syncInset(maximized: boolean) {
   const over = maximized ? Math.round(window.screenY + window.innerHeight - ((screen as { availTop?: number }).availTop ?? 0) - screen.availHeight) : 0;
   document.documentElement.style.setProperty("--inset-bottom", `${Math.max(0, over)}px`);
