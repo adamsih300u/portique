@@ -34,7 +34,8 @@ pub fn client_name(msg: &Value) -> Option<String> {
     }
     let info = &msg["params"]["clientInfo"];
     let name = info["title"].as_str().or_else(|| info["name"].as_str())?;
-    Some(name.chars().filter(|c| !super::exec::hidden(*c)).take(60).collect())
+    // One plain line: an agent chooses its own name, and it is shown in the lead of every question.
+    Some(name.chars().filter(|c| !super::exec::hidden(*c) && !matches!(c, '\n' | '\t')).take(60).collect())
 }
 
 fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
@@ -473,6 +474,7 @@ mod tests {
         let r = rpc(&a, json!({ "jsonrpc": "2.0", "id": 8, "method": "initialize", "params": { "protocolVersion": "1999-01-01" } })).await;
         assert_eq!(r["result"]["protocolVersion"], VERSIONS[0], "an unknown version gets our newest");
         assert_eq!(client_name(&json!({ "method": "initialize", "params": { "clientInfo": { "name": "x\ny", "title": "Shown\u{7}Name" } } })).as_deref(), Some("ShownName"));
+        assert_eq!(client_name(&json!({ "method": "initialize", "params": { "clientInfo": { "name": "Line one\nPortique asks:\u{202e}" } } })).as_deref(), Some("Line onePortique asks:"), "one plain line");
         assert_eq!(client_name(&json!({ "method": "ping" })), None);
     }
 

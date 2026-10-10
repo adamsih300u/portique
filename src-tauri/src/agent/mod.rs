@@ -39,8 +39,9 @@ use std::{
 pub const MAX_SESSIONS: usize = 8;
 /// Entries the activity log keeps.
 const AUDIT_KEPT: usize = 500;
-/// An ended session stays readable this long.
+/// An ended session stays readable this long, and no more than this many are kept.
 const KEEP_ENDED: Duration = Duration::from_secs(600);
+const KEEP_ENDED_AT_MOST: usize = 16;
 
 /// What the agent code needs from the app around it. `AppHost` is the real one; tests bring their own.
 pub trait Host: Send + Sync + 'static {
@@ -94,6 +95,17 @@ pub struct Audit {
     pub outcome: String,
 }
 
+const LOG_TEXT: usize = 500;
+
+/// Text for the activity log: the first part, and how much more there was, so a cut is never mistaken for the whole.
+pub(crate) fn log_text(text: &str) -> String {
+    let total = text.chars().count();
+    if total <= LOG_TEXT {
+        return text.to_string();
+    }
+    format!("{} … [{total} characters in all]", text.chars().take(LOG_TEXT).collect::<String>())
+}
+
 struct Shared {
     host: Arc<dyn Host>,
     sessions: Sessions,
@@ -102,6 +114,8 @@ struct Shared {
     audit: Mutex<VecDeque<Audit>>,
     patience: Duration,
     server: Mutex<Option<server::Running>>,
+    /// Starting and stopping the server one at a time, so two calls cannot leave two servers.
+    apply_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -142,6 +156,7 @@ impl Agents {
             audit: Mutex::default(),
             patience,
             server: Mutex::default(),
+            apply_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -169,10 +184,25 @@ impl Agents {
         self.registry().get(id).cloned().ok_or_else(|| ToolError("No such session. Call list_sessions to see the open ones.".into()))
     }
 
-    /// The sessions, oldest first. Ended ones are dropped once they are old.
-    pub fn sessions(&self) -> Vec<SessionInfo> {
+    /// Forgets ended sessions that are old, and the oldest ended ones beyond `KEEP_ENDED_AT_MOST`, so an agent that opens
+    /// and closes sessions without ever listing them cannot pile up transcripts.
+    fn prune(&self) {
         let mut reg = self.registry();
         reg.retain(|_, s| s.ended_for().is_none_or(|d| d < KEEP_ENDED));
+        let mut ended: Vec<(String, Duration)> = reg.iter().filter_map(|(id, s)| s.ended_for().map(|d| (id.clone(), d))).collect();
+        if ended.len() > KEEP_ENDED_AT_MOST {
+            ended.sort_by_key(|(_, d)| std::cmp::Reverse(*d)); // longest ended first
+            let surplus = ended.len() - KEEP_ENDED_AT_MOST;
+            for (id, _) in ended.into_iter().take(surplus) {
+                reg.remove(&id);
+            }
+        }
+    }
+
+    /// The sessions, oldest first. Ended ones are dropped once they are old.
+    pub fn sessions(&self) -> Vec<SessionInfo> {
+        self.prune();
+        let reg = self.registry();
         let mut all: Vec<SessionInfo> = reg.values().map(|s| s.info()).collect();
         all.sort_by_key(|i| std::cmp::Reverse(i.age_secs));
         all
@@ -282,7 +312,7 @@ impl Agents {
             profile: s.name.clone(),
             session: s.id().to_string(),
             action: action.into(),
-            text: text.chars().take(500).collect(),
+            text: log_text(text),
             outcome: outcome.into(),
         });
     }
@@ -304,6 +334,7 @@ impl Agents {
 
     /// Starts listening if agent access is on and the server is not already up; stops it if access is off.
     pub async fn apply(&self) -> anyhow::Result<Option<Endpoint>> {
+        let _one_at_a_time = self.0.apply_lock.lock().await;
         self.policy_changed();
         if self.settings().agent.enabled {
             if let Some(e) = self.endpoint() {

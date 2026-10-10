@@ -163,6 +163,10 @@ pub fn clean(bytes: &[u8]) -> String {
     out
 }
 
+/// The furthest a cursor-move sequence may jump. A real terminal is a few hundred columns wide; a sequence from a remote
+/// machine that asks for column four billion must not make us pad a line to match. Plain text is not limited.
+const MAX_COL: usize = 1000;
+
 fn put(line: &mut Vec<char>, col: &mut usize, c: char) {
     while line.len() < *col {
         line.push(' ');
@@ -180,12 +184,12 @@ fn csi(params: &[u8], fin: u8, line: &mut Vec<char>, col: &mut usize) {
     match fin {
         b'K' => match n.unwrap_or(0) {
             0 => line.truncate(*col),
-            1 => line.iter_mut().take(*col + 1).for_each(|c| *c = ' '),
+            1 => line.iter_mut().take(col.saturating_add(1)).for_each(|c| *c = ' '),
             _ => line.clear(),
         },
         b'D' => *col = col.saturating_sub(n.unwrap_or(1).max(1)),
-        b'C' => *col += n.unwrap_or(1).max(1),
-        b'G' => *col = n.unwrap_or(1).max(1) - 1,
+        b'C' => *col = col.saturating_add(n.unwrap_or(1).max(1)).min(MAX_COL),
+        b'G' => *col = (n.unwrap_or(1).max(1) - 1).min(MAX_COL),
         _ => {}
     }
 }
@@ -243,6 +247,18 @@ mod tests {
         assert_eq!(clean(b"$ ls -la\x1b[3D\x1b[K-l"), "$ ls -l");
         assert_eq!(clean(b"abcdef\x1b[1K"), "");
         assert_eq!(clean(b"abc\x1b[2Kx"), "   x");
+    }
+
+    #[test]
+    fn a_huge_cursor_move_from_a_remote_machine_cannot_exhaust_memory() {
+        // Seven bytes that once asked for a four gigabyte line and aborted the app.
+        for seq in ["a\x1b[99999999999Cb", "a\x1b[100000000Cb", "a\x1b[99999999999Gb", "a\x1b[18446744073709551615Cb", "x\x1b[99999999999C\x1b[1Kb"] {
+            let out = clean(seq.as_bytes());
+            assert!(out.len() <= MAX_COL + 8, "{} bytes from {seq:?}", out.len());
+        }
+        // Real long lines (minified JSON, say) are kept whole.
+        let wide = "x".repeat(50_000);
+        assert_eq!(clean(wide.as_bytes()).len(), 50_000);
     }
 
     #[test]

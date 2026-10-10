@@ -28,8 +28,31 @@ export interface QuestionCopy {
   buttons: AnswerButton[];
 }
 
+/** Past this many characters the box that shows a command scrolls, so the dialog says so. */
+export const LONG_TEXT = 600;
+
+/**
+ * Data the terminal sends by itself, in answer to a program's questions or to the window gaining focus: device and
+ * cursor-position reports, focus changes, and the replies to colour and string queries. Anything else it sends is the
+ * person (a key, a paste, drag and drop, input-method text), and takes the keyboard from an agent.
+ */
+export function isTerminalReply(data: string): boolean {
+  return REPLY.test(data);
+}
+
+const ESC = String.fromCharCode(27);
+const REPLY = new RegExp(`^${ESC}(?:\\[[?>]?[0-9;:]*[cRnIOt]|[\\]P][\\s\\S]*)$`);
+
 /** The words of a dialog that asks the person to let an agent do something. */
 export function questionCopy(q: AgentQuestion): QuestionCopy {
+  const c = baseCopy(q);
+  if (q.text.length > LONG_TEXT) {
+    c.note = `${c.note ? c.note + " " : ""}This one is ${q.text.length.toLocaleString("en-US")} characters long; scroll the box to read all of it before you answer.`;
+  }
+  return c;
+}
+
+function baseCopy(q: AgentQuestion): QuestionCopy {
   const who = q.client || "An agent";
   const deny: AnswerButton = { label: "Deny", decision: "deny", safe: true };
   switch (q.kind) {

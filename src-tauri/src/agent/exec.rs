@@ -151,7 +151,12 @@ pub fn hide_markers(text: &str) -> String {
 /// A character that hides or reorders what is shown: a control character, or an invisible or direction-changing format character.
 pub fn hidden(c: char) -> bool {
     (c.is_control() && !matches!(c, '\n' | '\t'))
-        || matches!(c as u32, 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB)
+        || matches!(
+            c as u32,
+            0x00AD | 0x034F | 0x061C | 0x115F | 0x1160 | 0x17B4 | 0x17B5 | 0x180B..=0x180F
+                | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x206F | 0x3164 | 0xFE00..=0xFE0F
+                | 0xFEFF | 0xFFA0 | 0xFFF9..=0xFFFB | 0xE0000..=0xE0FFF
+        )
 }
 
 /// Text as the person should read it in a question or the log: characters that could disguise it are shown as `⟨U+202E⟩`.
@@ -333,6 +338,9 @@ mod tests {
         assert_eq!(show_text("line one\nline\ttwo"), "line one\nline\ttwo", "newlines and tabs are fine");
         assert_eq!(show_text("é ü 日本"), "é ü 日本");
         assert_eq!(show_text("bell\u{7}"), "bell⟨U+0007⟩");
+        for c in ['\u{61c}', '\u{ad}', '\u{80}', '\u{9f}', '\u{e0041}', '\u{2065}', '\u{fe0f}', '\u{3164}'] {
+            assert!(hidden(c), "U+{:04X} should be spelled out", c as u32);
+        }
     }
 
     #[test]

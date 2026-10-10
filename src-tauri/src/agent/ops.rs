@@ -120,6 +120,7 @@ pub fn show_keys(bytes: &[u8]) -> String {
                 out.push('^');
                 out.push((b'@' + c as u8) as char);
             }
+            c if exec::hidden(c) => out.push_str(&format!("⟨U+{:04X}⟩", c as u32)),
             c => out.push(c),
         }
     }
@@ -159,8 +160,10 @@ impl Agents {
         if profile.protocol == crate::store::Protocol::Api {
             return Err(not_open());
         }
+        self.prune();
+        let too_many = || ToolError(format!("{MAX_SESSIONS} sessions are open already. Close one with close_session first."));
         if self.live() >= MAX_SESSIONS {
-            return Err(ToolError(format!("{MAX_SESSIONS} sessions are open already. Close one with close_session first.")));
+            return Err(too_many());
         }
         if profile.protocol != crate::store::Protocol::Local && !self.0.host.vault_unlocked() {
             return Err(ToolError("Portique's vault is locked, and this profile signs in with a saved login. Ask the user to unlock it, then try again.".into()));
@@ -171,7 +174,9 @@ impl Agents {
             crate::store::Protocol::Serial => profile.serial.port.clone(),
             _ => String::new(),
         };
-        let mut free = mode == AgentMode::Allow;
+        // Only a "for this session" answer clears a session of questions. A profile set to Allow is read live at each
+        // step, so turning it down to Ask applies to sessions already open.
+        let mut free = false;
         if mode == AgentMode::Ask {
             let what = if host.is_empty() { profile.name.clone() } else { format!("{} ({host})", profile.name) };
             let q = Question { kind: Kind::Open, client, profile: &profile.name, session: None, text: &what };
@@ -187,6 +192,15 @@ impl Agents {
             }
         }
 
+        // Questions can take minutes, and several opens may have waited together: look again before taking a place,
+        // and check the profile is still open to agents.
+        let settings = self.enabled()?;
+        if settings.agent.mode(profile_id) == AgentMode::Off {
+            return Err(not_open());
+        }
+        if self.live() >= MAX_SESSIONS {
+            return Err(too_many());
+        }
         let (cols, rows) = (clamp(cols, SCREEN_COLS), clamp(rows, SCREEN_ROWS));
         let session = Arc::new(AgentSession::new(&profile.id, &profile.name, &host, profile.protocol, client, cols, rows));
         session.set_free(free);
@@ -293,6 +307,14 @@ impl Agents {
         }
     }
 
+    /// Agent access is still on, and the session's profile is still open to agents.
+    fn still_open(&self, s: &AgentSession) -> ToolResult<()> {
+        if self.enabled()?.agent.mode(&s.profile_id) == AgentMode::Off {
+            return Err("The user withdrew agent access to this profile.".into());
+        }
+        Ok(())
+    }
+
     fn record_refusal(&self, client: &str, profile: &str, action: &str, text: &str) {
         self.record(super::Audit {
             at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64),
@@ -300,7 +322,7 @@ impl Agents {
             profile: profile.into(),
             session: String::new(),
             action: "refused".into(),
-            text: format!("{action}: {text}").chars().take(500).collect(),
+            text: super::log_text(&format!("{action}: {text}")),
             outcome: "the user declined".into(),
         });
     }
@@ -338,11 +360,16 @@ impl Agents {
         // The person reads the command with anything that could disguise it spelled out.
         let shown = exec::show_text(command);
         self.approve(&s, Kind::Command, &shown).await?;
-        self.writable(&s)?; // the person may have taken over while the question was open
+        // A question can stay open for minutes. Look again at everything that could have changed meanwhile: the person
+        // taking over, access being withdrawn, and whether the shell still takes a paste (a program may have changed it,
+        // and a command that was fine pasted may not be fine typed).
+        self.writable(&s)?;
+        self.still_open(&s)?;
+        let bracketed = s.bracketed();
+        exec::check_command(command, bracketed).map_err(|e| ToolError(format!("Not typed: {e}.")))?;
 
         let nonce = exec::nonce();
         let from = s.end_offset();
-        let bracketed = s.bracketed();
         s.set_inflight(Some(Inflight { nonce: nonce.clone(), from }));
         self.type_into(&s, exec::keystrokes(&exec::wrap(dialect, command, &nonce), bracketed))?;
 
@@ -438,6 +465,7 @@ impl Agents {
         let shown = show_keys(&bytes);
         self.approve(&s, Kind::Input, &shown).await?;
         self.writable(&s)?;
+        self.still_open(&s)?;
 
         // An interrupt abandons a command being followed, whose end marker will now never print.
         if bytes.iter().any(|b| *b == 0x03 || *b == 0x04) {
@@ -862,6 +890,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn turning_allow_down_to_ask_applies_to_a_session_that_is_already_open() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        assert_eq!(agents.run_command(&id, "echo free", Some(20), None).await.unwrap().output, "free");
+        host.settings.lock().unwrap().agent.profiles.insert(profile.clone(), AgentMode::Ask);
+        *host.auto.lock().unwrap() = Some((agents.clone(), Decision::Deny));
+        let err = agents.run_command(&id, "echo now-asked", Some(5), None).await.unwrap_err();
+        assert!(err.0.contains("declined"), "the next step is asked about: {err:?}");
+        assert_eq!(host.events("agent-approval").len(), 1);
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ended_sessions_do_not_pile_up_even_if_the_agent_never_lists_them() {
+        let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        for _ in 0..(super::super::KEEP_ENDED_AT_MOST + 6) {
+            let id = open(&agents, &profile).await;
+            agents.close_session(&id).await.unwrap();
+        }
+        assert!(agents.registry().len() <= super::super::KEEP_ENDED_AT_MOST + 1, "{} kept", agents.registry().len());
+    }
+
+    #[test]
+    fn the_log_says_when_it_cut_a_long_command() {
+        assert_eq!(super::super::log_text("ls"), "ls");
+        let cut = super::super::log_text(&"x".repeat(2000));
+        assert!(cut.contains("2000 characters in all") && cut.len() < 600, "{}", cut.len());
+    }
+
+    #[tokio::test]
     async fn the_number_of_live_sessions_is_capped() {
         let (agents, _host, profile) = setup("sh", AgentMode::Allow, approval_patience());
         let mut ids = Vec::new();
@@ -905,5 +964,7 @@ mod tests {
         assert_eq!(show_keys(b"ls -l\r"), "ls -l⏎");
         assert_eq!(show_keys(&[3]), "^C");
         assert_eq!(show_keys(b"\x1b[A"), "⎋[A");
+        assert_eq!(show_keys("a\u{202e}b\u{200b}".as_bytes()), "a⟨U+202E⟩b⟨U+200B⟩", "invisible characters are spelled out");
+        assert_eq!(show_keys("é".as_bytes()), "é");
     }
 }

@@ -7,6 +7,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { isTerminalReply } from "./agent-core";
 import { api, Channel, type Profile } from "./api";
 import { effectiveFont, getTheme, xtermTheme } from "./themes";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
@@ -125,8 +126,16 @@ export class TerminalTab {
       return true;
     });
 
-    this.term.onData((d) => this.send(toBytes(d)));
-    this.term.onBinary((d) => this.send(Uint8Array.from(d, (c) => c.charCodeAt(0))));
+    // Anything that is not the terminal answering a program (a key, a paste, drag and drop, input-method text) is the
+    // person, and takes the keyboard from an agent; `onKey` alone would miss all but real key presses.
+    this.term.onData((d) => {
+      if (!isTerminalReply(d)) this.takeOver();
+      this.send(toBytes(d));
+    });
+    this.term.onBinary((d) => {
+      this.takeOver();
+      this.send(Uint8Array.from(d, (c) => c.charCodeAt(0)));
+    });
     this.term.onKey(({ domEvent }) => {
       this.takeOver();
       if (this.state === "disconnected" && domEvent.key === "Enter") void this.connect();

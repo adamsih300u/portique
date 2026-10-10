@@ -57,6 +57,19 @@ pub struct Approvals {
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
 }
 
+struct Cleanup<'a> {
+    approvals: &'a Approvals,
+    host: &'a dyn Host,
+    id: &'a str,
+}
+
+impl Drop for Cleanup<'_> {
+    fn drop(&mut self) {
+        self.approvals.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(self.id);
+        self.host.emit("agent-approval-closed", json!({ "id": self.id }));
+    }
+}
+
 impl Approvals {
     pub async fn ask(&self, host: &dyn Host, q: Question<'_>, patience: Duration) -> Outcome {
         let id = super::exec::nonce();
@@ -73,15 +86,14 @@ impl Approvals {
             json!({ "id": id, "kind": q.kind, "client": q.client, "profile": q.profile, "session": q.session, "text": q.text }),
         );
         host.attention();
-        let outcome = match tokio::time::timeout(patience, rx).await {
+        // However this call ends (an answer, a timeout, or the agent hanging up and the call being dropped), the
+        // question is taken off the list and the page is told to drop its dialog.
+        let _cleanup = Cleanup { approvals: self, host, id: &id };
+        match tokio::time::timeout(patience, rx).await {
             Ok(Ok(d)) => Outcome::Decided(d),
             Ok(Err(_)) => Outcome::Decided(Decision::Deny), // withdrawn
             Err(_) => Outcome::TimedOut,
-        };
-        self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
-        // Tells the page to drop the dialog if nobody answered it.
-        host.emit("agent-approval-closed", json!({ "id": id }));
-        outcome
+        }
     }
 
     /// The person's answer. False when the question is gone (timed out, or already answered).
@@ -161,6 +173,22 @@ mod tests {
         asked(&host).await;
         a.deny_all();
         assert_eq!(task.await.unwrap(), Outcome::Decided(Decision::Deny));
+    }
+
+    #[tokio::test]
+    async fn a_call_that_is_dropped_while_waiting_frees_its_slot_and_closes_the_dialog() {
+        let host = Arc::new(FakeHost::default());
+        let a = Arc::new(Approvals::default());
+        let task = tokio::spawn({
+            let (host, a) = (host.clone(), a.clone());
+            async move { a.ask(&*host, q("ls"), PATIENCE).await }
+        });
+        asked(&host).await;
+        assert_eq!(a.waiting(), 1);
+        task.abort(); // the agent hung up
+        let _ = task.await;
+        assert_eq!(a.waiting(), 0, "the slot is free again");
+        assert_eq!(host.events("agent-approval-closed").len(), 1, "the page is told to drop the dialog");
     }
 
     #[tokio::test]

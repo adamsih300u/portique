@@ -126,7 +126,12 @@ async fn accept(listener: TcpListener, state: Arc<State>, mut stopped: watch::Re
             _ = stopped.changed() => return,
             accepted = listener.accept() => match accepted {
                 Ok((stream, peer)) if peer.ip().is_loopback() => stream,
-                _ => continue,
+                Ok(_) => continue,
+                // Out of file handles and the like: wait, instead of spinning on the same error.
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
             },
         };
         let state = state.clone();
@@ -307,7 +312,12 @@ pub fn config(r: &Running, kind: &str) -> Option<String> {
 /// The address and token published by a running Portique, for the bridge. `None` when it is not running.
 pub fn read_endpoint(dir: &std::path::Path) -> Option<(String, String)> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(ENDPOINT_FILE)).ok()?).ok()?;
-    Some((v["url"].as_str()?.to_string(), v["token"].as_str()?.to_string()))
+    let url = v["url"].as_str()?;
+    // The token is only ever sent to this computer, whatever the file says.
+    if !url.starts_with("http://127.0.0.1:") {
+        return None;
+    }
+    Some((url.to_string(), v["token"].as_str()?.to_string()))
 }
 
 #[cfg(test)]
@@ -452,6 +462,9 @@ mod tests {
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         let (url, token) = read_endpoint(u.dir.path()).unwrap();
         assert_eq!((url, token), (u.url.clone(), u.token.clone()));
+        std::fs::write(&path, r#"{"url":"http://evil.example:80/mcp","token":"t","pid":1}"#).unwrap();
+        assert!(read_endpoint(u.dir.path()).is_none(), "a file that names another machine is not trusted with the token");
+        std::fs::write(&path, format!(r#"{{"url":"{}","token":"{}","pid":{}}}"#, u.url, u.token, std::process::id())).unwrap();
         let (dir, http, url) = (u.dir, u.http, u.url);
         u.running.stop();
         assert!(!path.exists());

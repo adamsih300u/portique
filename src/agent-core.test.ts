@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentQuestion } from "./api";
-import { activityLine, controllerBadge, endpointNote, MODE_CHOICES, modeMenuLabel, questionCopy } from "./agent-core";
+import { activityLine, controllerBadge, endpointNote, isTerminalReply, MODE_CHOICES, modeMenuLabel, questionCopy } from "./agent-core";
 
 const q = (kind: AgentQuestion["kind"], text: string): AgentQuestion => ({ id: "1", kind, client: "an-agent", profile: "web1", session: "s", text });
 
@@ -35,6 +35,30 @@ describe("questionCopy", () => {
 
   it("falls back to a plain name when the agent gave none", () => {
     expect(questionCopy({ ...q("command", "ls"), client: "" }).lead).toBe("An agent wants to run this in web1:");
+  });
+});
+
+describe("long commands", () => {
+  it("say how long they are, so a hidden tail is not a surprise", () => {
+    const short = questionCopy(q("command", "ls"));
+    expect(short.note).toBe("");
+    const long = questionCopy(q("command", `echo ${"a".repeat(2000)}`));
+    expect(long.note).toContain("2,005 characters");
+    expect(long.note).toContain("scroll");
+    expect(questionCopy(q("input", "x".repeat(700))).note).toContain("⏎ is Enter");
+  });
+});
+
+describe("isTerminalReply", () => {
+  it("knows the terminal's own answers", () => {
+    for (const r of ["\x1b[?1;2c", "\x1b[>0;276;0c", "\x1b[12;40R", "\x1b[?12;40R", "\x1b[0n", "\x1b[I", "\x1b[O", "\x1b[8;24;80t", "\x1b]11;rgb:0000/0000/0000\x1b\\", "\x1bP>|xterm\x1b\\"]) {
+      expect(isTerminalReply(r), JSON.stringify(r)).toBe(true);
+    }
+  });
+  it("treats everything a person does as input", () => {
+    for (const k of ["a", "\r", "ls -l\r", "\x03", "\x1b", "\x1b[A", "\x1b[3~", "\x1b[200~pasted\x1b[201~", "日本語", "\x1b[<0;10;5M", "text\x1b[I"]) {
+      expect(isTerminalReply(k), JSON.stringify(k)).toBe(false);
+    }
   });
 });
 
