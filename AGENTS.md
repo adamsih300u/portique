@@ -84,5 +84,6 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - **Agent access is off by default and set per profile**, in `settings.json` by profile id, never in the profile. An agent sees only profiles that are on and uses only sessions it opened itself. → [ADR-0016](docs/adr/0016-agent-access-is-off-and-per-profile.md)
 - **The agent server lives in the app, on loopback only**, behind a per-start token and `Host`/`Origin` checks; `portique mcp` bridges stdio to it. → [ADR-0017](docs/adr/0017-agent-server-in-the-app-on-loopback.md)
 - **An agent's command ends with markers typed around it in the open shell** (POSIX shells only); the person can see it and take the keyboard. The activity log stays in memory. → [ADR-0018](docs/adr/0018-commands-finish-with-markers-in-the-open-shell.md)
+- **An agent's first step in a session needs the master password** (while a vault exists and the one setting is on): it is checked in Rust, a plain answer cannot grant it, and locking the vault ends it. → [ADR-0019](docs/adr/0019-an-agents-first-step-needs-the-master-password.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.

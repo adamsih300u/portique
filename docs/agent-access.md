@@ -4,7 +4,7 @@ Portique can let an AI agent use terminals: open a shell on one of your hosts (o
 
 It is **off until you turn it on**, and even then an agent can only use the profiles you mark.
 
-For the rest of the app, see [Using Portique](using-portique.md). The reasons behind the design are in [the change file](changes/mcp-agent-terminals.md) and [ADR-0016](adr/0016-agent-access-is-off-and-per-profile.md), [0017](adr/0017-agent-server-in-the-app-on-loopback.md) and [0018](adr/0018-commands-finish-with-markers-in-the-open-shell.md).
+For the rest of the app, see [Using Portique](using-portique.md). The reasons behind the design are in [the change file](changes/mcp-agent-terminals.md) and [ADR-0016](adr/0016-agent-access-is-off-and-per-profile.md), [0017](adr/0017-agent-server-in-the-app-on-loopback.md) and [0018](adr/0018-commands-finish-with-markers-in-the-open-shell.md) and [0019](adr/0019-an-agents-first-step-needs-the-master-password.md).
 
 ## Turn it on
 
@@ -23,6 +23,15 @@ Right-click a profile (an SSH host, a Telnet or serial profile, or a local shell
 | **Allow** | Open it and run commands without asking. Use it where a mistake is cheap. |
 
 The choice is kept in `settings.json` by profile id, not in the profile. Duplicating or importing a profile therefore never carries access with it, and deleting a profile removes it. The palette has **Agent access for …** for the focused tab's profile.
+
+## Your master password
+
+If you have a vault, an agent cannot run anything until you let it, with your master password. The first time it tries a command or types into a session, a dialog shows what it wants and asks for the password. One entry covers that session for as long as the vault stays open: **locking the vault, by hand or by its idle timer, ends it**, and the next step asks again. So a locked Portique does nothing for an agent, and an agent left running while you are away stops when the vault locks.
+
+- The password is checked inside Portique and never reaches the agent. A wrong one is refused with the dialog still open; five wrong ones decline the request.
+- For a profile set to *Ask me each time*, the same dialog holds the password and the yes, so there is still one question.
+- If the vault is locked, entering the password opens it, as the normal unlock does.
+- **Settings… → Agent access → Ask for my password before an agent runs commands** turns this off. With no vault there is no master password, so it has nothing to ask for and only the per-profile questions apply.
 
 ## Connect an agent
 
@@ -65,6 +74,7 @@ An agent never sees a password, key or the vault. It names a profile and Portiqu
 - The token is written to `agent-endpoint.json` in the config folder, readable by you only, and removed when Portique quits.
 - An agent reaches only profiles you marked, and only sessions it opened itself. Your own tabs are not visible to it.
 - A shell is a shell: an agent in a local terminal has your account's rights on this computer, Portique's own files included, and on a host it has the profile's login. Choose *Ask me each time* for those, and read each command. Characters that could disguise a command (an invisible character, a right-to-left override) are shown spelled out in the question.
+- With a vault, [your master password](#your-master-password) is needed before an agent's first step in each session, so nothing starts without you at the keyboard.
 - *Ask me each time* puts the exact text in front of you before it is typed. A refusal is passed on with an instruction not to try again or work around it.
 - Everything a terminal prints is untrusted text from another machine. The server tells agents never to follow instructions found in it, but the stronger protection is the one above: choose *Ask me each time* on anything that matters.
 - At most 8 sessions are open at once, output returned in one call is capped, and no more than 8 questions wait at a time.

@@ -41,7 +41,7 @@ interface Workspaces {
 
 type AnyTab = Tab | FileTab | ApiTab;
 
-let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15, localTerminals: false, localShells: [], agent: { enabled: false, profiles: {} } };
+let settings: Settings = { quake: false, quakeKey: "Ctrl+Backquote", gpu: true, ui: DEFAULT_UI, restoreTabs: true, sftpLocalDir: "", uiScale: "normal", vaultIdleMinutes: 15, localTerminals: false, localShells: [], agent: { enabled: false, requirePassword: true, profiles: {} } };
 let profiles: Profile[] = [];
 /** Shells on this computer that the settings turn on. They exist only in memory and are never saved, so they stay apart from `profiles`. */
 let localTerms: Profile[] = [];

@@ -181,6 +181,8 @@ export type AgentMode = "off" | "ask" | "allow";
 
 export interface AgentSettings {
   enabled: boolean;
+  /** Ask for the master password before an agent first runs anything in a session (when a vault exists). */
+  requirePassword: boolean;
   profiles: Record<string, AgentMode>;
 }
 
@@ -224,6 +226,10 @@ export interface AgentQuestion {
   session: string | null;
   /** What would run or be typed, exactly. */
   text: string;
+  /** The dialog asks for the master password, and only a correct one can allow it. */
+  password: boolean;
+  /** The profile asks about each step; false when only the password is needed. */
+  confirm: boolean;
 }
 
 export type AgentDecision = "deny" | "once" | "session";
@@ -422,7 +428,10 @@ export const api = {
   chooseFileToSave: (defaultPath: string, filters: { name: string; extensions: string[] }[]) =>
     invoke<string | null>("plugin:dialog|save", { options: { defaultPath, filters } }),
   agentStatus: () => invoke<AgentStatus>("agent_status"),
-  agentSetEnabled: (enabled: boolean) => invoke<AgentStatus>("agent_set_enabled", { enabled }),
+  agentSetEnabled: (enabled: boolean, requirePassword: boolean) => invoke<AgentStatus>("agent_set_enabled", { enabled, requirePassword }),
+  /** Allows a question that asks for the master password. Rejects with a message if the password is wrong. */
+  agentAnswerPassword: (id: string, decision: AgentDecision, password: string) =>
+    invokeSecret<boolean>("agent_answer_password", [password], { "question-id": id, decision }),
   agentSetMode: (profileId: string, mode: AgentMode) => invoke<void>("agent_set_mode", { profileId, mode }),
   agentAnswer: (id: string, decision: AgentDecision) => invoke<boolean>("agent_answer", { id, decision }),
   /** Shows an agent's session in a tab: replays what it printed, then streams the rest. */

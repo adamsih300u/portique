@@ -50,12 +50,27 @@ pub struct Question<'a> {
     pub session: Option<&'a str>,
     /// What would run or be typed, exactly.
     pub text: &'a str,
+    /// The dialog also asks for the master password.
+    pub password: bool,
+    /// Whether this is a real "may I?" (the profile asks for each step) rather than only the password.
+    pub confirm: bool,
 }
 
 #[derive(Default)]
 pub struct Approvals {
-    pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    pending: Mutex<HashMap<String, Pending>>,
 }
+
+struct Pending {
+    tx: oneshot::Sender<Decision>,
+    /// Wrong passwords tried against this question.
+    wrong: u8,
+    /// Only a password that checked out may grant this question (see `answer_verified`).
+    needs_password: bool,
+}
+
+/// Wrong passwords a question puts up with before it counts as a no.
+pub const MAX_WRONG: u8 = 5;
 
 struct Cleanup<'a> {
     approvals: &'a Approvals,
@@ -79,11 +94,14 @@ impl Approvals {
             if pending.len() >= MAX_PENDING {
                 return Outcome::Crowded;
             }
-            pending.insert(id.clone(), tx);
+            pending.insert(id.clone(), Pending { tx, wrong: 0, needs_password: q.password });
         }
         host.emit(
             "agent-approval",
-            json!({ "id": id, "kind": q.kind, "client": q.client, "profile": q.profile, "session": q.session, "text": q.text }),
+            json!({
+                "id": id, "kind": q.kind, "client": q.client, "profile": q.profile, "session": q.session, "text": q.text,
+                "password": q.password, "confirm": q.confirm,
+            }),
         );
         host.attention();
         // However this call ends (an answer, a timeout, or the agent hanging up and the call being dropped), the
@@ -96,15 +114,38 @@ impl Approvals {
         }
     }
 
-    /// The person's answer. False when the question is gone (timed out, or already answered).
+    /// The person's answer. False when the question is gone (timed out, or already answered), and for a yes to a question
+    /// that wants the master password: only `answer_verified` may grant that, after the password has been checked.
     pub fn answer(&self, id: &str, decision: Decision) -> bool {
-        self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(id).is_some_and(|tx| tx.send(decision).is_ok())
+        let mut pending = self.pending.lock().unwrap_or_else(|p| p.into_inner());
+        if decision != Decision::Deny && pending.get(id).is_some_and(|p| p.needs_password) {
+            return false;
+        }
+        pending.remove(id).is_some_and(|p| p.tx.send(decision).is_ok())
+    }
+
+    /// Answers a question whose password has just been checked.
+    pub fn answer_verified(&self, id: &str, decision: Decision) -> bool {
+        self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(id).is_some_and(|p| p.tx.send(decision).is_ok())
+    }
+
+    /// Whether the question is still waiting for an answer.
+    pub fn is_waiting(&self, id: &str) -> bool {
+        self.pending.lock().unwrap_or_else(|p| p.into_inner()).contains_key(id)
+    }
+
+    /// Notes a wrong password and returns how many this question has had.
+    pub fn wrong_password(&self, id: &str) -> u8 {
+        self.pending.lock().unwrap_or_else(|p| p.into_inner()).get_mut(id).map_or(0, |p| {
+            p.wrong += 1;
+            p.wrong
+        })
     }
 
     /// Answers every waiting question with a no (when agent access is switched off).
     pub fn deny_all(&self) {
-        for (_, tx) in self.pending.lock().unwrap_or_else(|p| p.into_inner()).drain() {
-            let _ = tx.send(Decision::Deny);
+        for (_, p) in self.pending.lock().unwrap_or_else(|p| p.into_inner()).drain() {
+            let _ = p.tx.send(Decision::Deny);
         }
     }
 
@@ -121,7 +162,7 @@ mod tests {
     use std::sync::Arc;
 
     fn q(text: &str) -> Question<'_> {
-        Question { kind: Kind::Command, client: "claude-code", profile: "web1", session: Some("s1"), text }
+        Question { kind: Kind::Command, client: "claude-code", profile: "web1", session: Some("s1"), text, password: false, confirm: true }
     }
 
     /// Waits until the question is on the page, and returns its id.

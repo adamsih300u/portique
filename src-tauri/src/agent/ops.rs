@@ -179,7 +179,7 @@ impl Agents {
         let mut free = false;
         if mode == AgentMode::Ask {
             let what = if host.is_empty() { profile.name.clone() } else { format!("{} ({host})", profile.name) };
-            let q = Question { kind: Kind::Open, client, profile: &profile.name, session: None, text: &what };
+            let q = Question { kind: Kind::Open, client, profile: &profile.name, session: None, text: &what, password: false, confirm: true };
             match self.0.approvals.ask(&*self.0.host, q, self.0.patience).await {
                 Outcome::Decided(super::Decision::Once) => {}
                 Outcome::Decided(super::Decision::Session) => free = true,
@@ -282,20 +282,31 @@ impl Agents {
         Ok(())
     }
 
-    /// The person's yes, when the profile's mode asks for one and the session is not already cleared.
+    /// What the person must do before this step goes ahead: enter the master password (once per session, for as long as the
+    /// vault stays open, and only where a vault exists and they have not turned this off), and say yes (where the profile
+    /// asks for each step). Nothing when neither applies.
     async fn approve(&self, s: &AgentSession, kind: Kind, text: &str) -> ToolResult<()> {
         let settings = self.enabled()?;
-        match settings.agent.mode(&s.profile_id) {
-            AgentMode::Off => return Err("The user withdrew agent access to this profile.".into()),
-            AgentMode::Allow => return Ok(()),
-            AgentMode::Ask if s.free() => return Ok(()),
-            AgentMode::Ask => {}
+        let mode = settings.agent.mode(&s.profile_id);
+        if mode == AgentMode::Off {
+            return Err("The user withdrew agent access to this profile.".into());
         }
-        let q = Question { kind, client: &s.client, profile: &s.name, session: Some(s.id()), text };
+        let password = settings.agent.require_password && self.0.host.vault_exists() && !s.proven(self.0.host.vault_epoch());
+        let confirm = mode == AgentMode::Ask && !s.free();
+        if !password && !confirm {
+            return Ok(());
+        }
+        let q = Question { kind, client: &s.client, profile: &s.name, session: Some(s.id()), text, password, confirm };
         match self.0.approvals.ask(&*self.0.host, q, self.0.patience).await {
-            Outcome::Decided(super::Decision::Once) => Ok(()),
-            Outcome::Decided(super::Decision::Session) => {
-                s.set_free(true);
+            Outcome::Decided(d @ (super::Decision::Once | super::Decision::Session)) => {
+                if d == super::Decision::Session && confirm {
+                    s.set_free(true);
+                }
+                if password {
+                    // The dialog checked the password, and opened the vault if it was locked. Note which opening it was.
+                    let epoch = self.0.host.vault_epoch().ok_or_else(|| ToolError::from("Portique's vault is locked. Ask the user to unlock it."))?;
+                    s.set_proof(epoch);
+                }
                 Ok(())
             }
             Outcome::Decided(super::Decision::Deny) => {
@@ -887,6 +898,180 @@ mod tests {
         assert!(err.0.contains("has ended"), "{err:?}");
         assert!(agents.read_output(&id, Some(0), None, None).await.unwrap().output.contains("bye"));
         assert_eq!(agents.list_sessions().unwrap().len(), 1);
+    }
+
+    const PW: &str = "correct horse battery staple";
+
+    /// Gives the fake app an open vault with a known password.
+    fn with_vault(host: &FakeHost) {
+        let mut v = host.vault.lock().unwrap();
+        v.password = Some(PW.into());
+        v.epoch = Some(1);
+        v.opened = 1;
+    }
+
+    /// Waits for the `n`th question to be shown and returns it.
+    async fn question(host: &FakeHost, n: usize) -> serde_json::Value {
+        for _ in 0..400 {
+            let all = host.events("agent-approval");
+            if all.len() >= n {
+                return all[n - 1].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("question {n} was never shown");
+    }
+
+    #[tokio::test]
+    async fn with_a_vault_the_first_command_needs_the_master_password_and_the_next_does_not() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        with_vault(&host);
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        let run = tokio::spawn({
+            let (agents, id) = (agents.clone(), id.clone());
+            async move { agents.run_command(&id, "echo gated", Some(20), None).await }
+        });
+        let q = question(&host, 1).await;
+        assert_eq!((q["password"].as_bool(), q["confirm"].as_bool(), q["text"].as_str()), (Some(true), Some(false), Some("echo gated")), "Allow mode needs only the password");
+        let qid = q["id"].as_str().unwrap();
+
+        assert!(!agents.answer(qid, Decision::Once), "a plain yes cannot grant a question that wants the password");
+        assert!(!agents.answer(qid, Decision::Session));
+        assert!(agents.answer_password(qid, Decision::Once, "not the password").is_err());
+        assert!(!run.is_finished(), "a wrong password leaves the question open");
+        assert_eq!(agents.answer_password(qid, Decision::Once, PW), Ok(true));
+        assert_eq!(run.await.unwrap().unwrap().output, "gated");
+
+        // Proven for this session: no more questions while the vault stays open.
+        assert_eq!(agents.run_command(&id, "echo again", Some(20), None).await.unwrap().output, "again");
+        assert_eq!(host.events("agent-approval").len(), 1);
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn locking_the_vault_takes_the_proof_away() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        with_vault(&host);
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        let first = tokio::spawn({
+            let (agents, id) = (agents.clone(), id.clone());
+            async move { agents.run_command(&id, "echo one", Some(20), None).await }
+        });
+        let qid = question(&host, 1).await["id"].as_str().unwrap().to_string();
+        agents.answer_password(&qid, Decision::Once, PW).unwrap();
+        first.await.unwrap().unwrap();
+
+        host.vault.lock().unwrap().lock(); // the idle timer, or the person, locks it
+        let second = tokio::spawn({
+            let (agents, id) = (agents.clone(), id.clone());
+            async move { agents.run_command(&id, "echo two", Some(20), None).await }
+        });
+        let q = question(&host, 2).await;
+        assert_eq!(q["password"], true, "locked and opened again means asking again");
+        // The password also opens the vault, as the normal unlock would.
+        assert_eq!(agents.answer_password(q["id"].as_str().unwrap(), Decision::Once, PW), Ok(true));
+        assert_eq!(second.await.unwrap().unwrap().output, "two");
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn too_many_wrong_passwords_decline_the_request() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        with_vault(&host);
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        let run = tokio::spawn({
+            let (agents, id) = (agents.clone(), id.clone());
+            async move { agents.run_command(&id, "echo never", Some(20), None).await }
+        });
+        let qid = question(&host, 1).await["id"].as_str().unwrap().to_string();
+        for _ in 1..super::super::approval::MAX_WRONG {
+            assert!(agents.answer_password(&qid, Decision::Once, "nope").unwrap_err().contains("wrong"));
+        }
+        assert!(agents.answer_password(&qid, Decision::Once, "nope").unwrap_err().contains("too many times"));
+        let err = run.await.unwrap().unwrap_err();
+        assert!(err.0.contains("declined"), "{err:?}");
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn saying_no_needs_no_password() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        with_vault(&host);
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        let run = tokio::spawn({
+            let (agents, id) = (agents.clone(), id.clone());
+            async move { agents.run_command(&id, "echo no", Some(20), None).await }
+        });
+        let qid = question(&host, 1).await["id"].as_str().unwrap().to_string();
+        assert!(agents.answer(&qid, Decision::Deny));
+        assert!(run.await.unwrap().unwrap_err().0.contains("declined"));
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn in_ask_mode_one_dialog_holds_both_the_password_and_the_yes() {
+        let (agents, host, profile) = setup("sh", AgentMode::Ask, approval_patience());
+        with_vault(&host);
+        *host.auto.lock().unwrap() = Some((agents.clone(), Decision::Once)); // answers the open question
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        *host.auto.lock().unwrap() = None;
+        let run = tokio::spawn({
+            let (agents, id) = (agents.clone(), id.clone());
+            async move { agents.run_command(&id, "echo both", Some(20), None).await }
+        });
+        let q = question(&host, 2).await; // the first was the open
+        assert_eq!((q["password"].as_bool(), q["confirm"].as_bool()), (Some(true), Some(true)));
+        assert_eq!(agents.answer_password(q["id"].as_str().unwrap(), Decision::Session, PW), Ok(true));
+        assert_eq!(run.await.unwrap().unwrap().output, "both");
+        // "For this session" cleared the yes and the password: nothing more is asked.
+        agents.run_command(&id, "echo quiet", Some(20), None).await.unwrap();
+        assert_eq!(host.events("agent-approval").len(), 2);
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_person_can_turn_the_password_check_off() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        with_vault(&host);
+        host.settings.lock().unwrap().agent.require_password = false;
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        assert_eq!(agents.run_command(&id, "echo ungated", Some(20), None).await.unwrap().output, "ungated");
+        assert!(host.events("agent-approval").is_empty());
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn without_a_vault_there_is_no_password_to_ask_for() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        assert!(host.settings.lock().unwrap().agent.require_password, "the check is on");
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        assert_eq!(agents.run_command(&id, "echo plain", Some(20), None).await.unwrap().output, "plain");
+        assert!(host.events("agent-approval").is_empty());
+        agents.close_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn typed_input_is_gated_like_a_command() {
+        let (agents, host, profile) = setup("sh", AgentMode::Allow, approval_patience());
+        with_vault(&host);
+        let id = open(&agents, &profile).await;
+        settled(&agents, &id).await;
+        let typed = tokio::spawn({
+            let (agents, id) = (agents.clone(), id.clone());
+            async move { agents.send_input(&id, Some("echo typed"), &["Enter".to_string()], Some(500)).await }
+        });
+        let q = question(&host, 1).await;
+        assert_eq!((q["kind"].as_str(), q["password"].as_bool()), (Some("input"), Some(true)));
+        agents.answer_password(q["id"].as_str().unwrap(), Decision::Once, PW).unwrap();
+        assert!(typed.await.unwrap().unwrap().output.contains("typed"));
+        agents.close_session(&id).await.unwrap();
     }
 
     #[tokio::test]

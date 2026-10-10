@@ -632,11 +632,13 @@ fn agent_status(agents: State<'_, agent::Agents>) -> AgentStatus {
     agent_status_now(&agents)
 }
 
-/// Switches agent access on or off. Off closes every session an agent opened. If the server cannot start, the setting stays off.
+/// Switches agent access on or off, and whether an agent needs the master password before it runs anything in a session.
+/// Off closes every session an agent opened. If the server cannot start, the setting stays off.
 #[tauri::command]
-async fn agent_set_enabled(agents: State<'_, agent::Agents>, enabled: bool) -> Res<AgentStatus> {
+async fn agent_set_enabled(agents: State<'_, agent::Agents>, enabled: bool, require_password: bool) -> Res<AgentStatus> {
     let mut s = window::load();
     s.agent.enabled = enabled;
+    s.agent.require_password = require_password;
     window::save(&s).map_err(err)?;
     if let Err(e) = agents.apply().await {
         s.agent.enabled = false;
@@ -669,6 +671,23 @@ fn agent_set_mode(agents: State<'_, agent::Agents>, profile_id: String, mode: wi
 #[tauri::command]
 fn agent_answer(agents: State<'_, agent::Agents>, id: String, decision: agent::Decision) -> bool {
     agents.answer(&id, decision)
+}
+
+/// The person's answer to a question that asks for the master password (`password` is true in the event). The password
+/// comes as raw bytes like the vault's own (`ipc.rs`); the question and the decision are plain headers. A wrong password is
+/// an error the dialog shows, and the question stays open.
+#[tauri::command]
+async fn agent_answer_password(agents: State<'_, agent::Agents>, request: tauri::ipc::Request<'_>) -> Res<bool> {
+    let [password] = take_secrets::<1>(&request)?;
+    let id = ipc::header(&request, "question-id").ok_or("no question named")?.to_string();
+    let decision = match ipc::header(&request, "decision") {
+        Some("once") => agent::Decision::Once,
+        Some("session") => agent::Decision::Session,
+        Some("deny") => agent::Decision::Deny,
+        _ => return Err("no decision given".into()),
+    };
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || agents.answer_password(&id, decision, &password)).await.map_err(|e| e.to_string())?
 }
 
 /// Shows an agent's session in a tab: replays what it printed so far, then streams the rest. Same frames as `connect_session`.
@@ -777,6 +796,7 @@ pub fn run() {
             agent_set_enabled,
             agent_set_mode,
             agent_answer,
+            agent_answer_password,
             agent_attach,
             agent_takeover,
             agent_resume,

@@ -366,3 +366,4 @@ kbd { font: var(--fs-xs)/1 system-ui, "Segoe UI", sans-serif; padding: 2px 5px; 
 .agent-config { width: 100%; margin-top: 8px; font: var(--fs-xs)/1.5 var(--mono); }
 .agent-buttons { display: flex; gap: 8px; margin: 8px 0; } .agent-buttons[hidden] { display: none; }
 .modal-buttons button:disabled { opacity: .4; cursor: not-allowed; }
+.agent-password { width: 100%; margin: 6px 0 2px; }

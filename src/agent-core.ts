@@ -26,6 +26,8 @@ export interface QuestionCopy {
   code: string;
   note: string;
   buttons: AnswerButton[];
+  /** The dialog shows a password box, and every button but Deny sends the password with the answer. */
+  needsPassword: boolean;
 }
 
 /** Past this many characters the box that shows a command scrolls, so the dialog says so. */
@@ -46,6 +48,20 @@ const REPLY = new RegExp(`^${ESC}(?:\\[[?>]?[0-9;:]*[cRnIOt]|[\\]P][\\s\\S]*)$`)
 /** The words of a dialog that asks the person to let an agent do something. */
 export function questionCopy(q: AgentQuestion): QuestionCopy {
   const c = baseCopy(q);
+  c.needsPassword = q.password === true;
+  if (c.needsPassword) {
+    const typing = q.kind === "input";
+    const why = "Enter your master password to allow it. It stays allowed in this session until the vault locks.";
+    if (q.confirm === false) {
+      // Only the password is wanted: the profile does not ask about each step.
+      c.title = "Unlock this terminal for an agent?";
+      c.note = why;
+      c.buttons = [c.buttons[0], { label: "Allow", decision: "once" }];
+    } else {
+      c.note = `${c.note ? c.note + " " : ""}Your master password is needed once for this session. It stays allowed until the vault locks.`;
+    }
+    if (typing && q.confirm === false) c.note += " ⏎ is Enter and ^C is Ctrl+C.";
+  }
   if (q.text.length > LONG_TEXT) {
     c.note = `${c.note ? c.note + " " : ""}This one is ${q.text.length.toLocaleString("en-US")} characters long; scroll the box to read all of it before you answer.`;
   }
@@ -63,6 +79,7 @@ function baseCopy(q: AgentQuestion): QuestionCopy {
         code: q.text,
         note: "It will use the login Portique has saved for this profile. You will see the session in a tab of its own and can take the keyboard at any time.",
         buttons: [deny, { label: "Allow, ask me for each step", decision: "once" }, { label: "Allow, don't ask again in this session", decision: "session" }],
+        needsPassword: false,
       };
     case "input":
       return {
@@ -71,6 +88,7 @@ function baseCopy(q: AgentQuestion): QuestionCopy {
         code: q.text,
         note: "⏎ is Enter and ^C is Ctrl+C.",
         buttons: [deny, { label: "Allow once", decision: "once" }, { label: "Allow for this session", decision: "session" }],
+        needsPassword: false,
       };
     default:
       return {
@@ -79,6 +97,7 @@ function baseCopy(q: AgentQuestion): QuestionCopy {
         code: q.text,
         note: "",
         buttons: [deny, { label: "Allow once", decision: "once" }, { label: "Allow for this session", decision: "session" }],
+        needsPassword: false,
       };
   }
 }

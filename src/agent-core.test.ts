@@ -2,7 +2,41 @@ import { describe, expect, it } from "vitest";
 import type { AgentQuestion } from "./api";
 import { activityLine, controllerBadge, endpointNote, isTerminalReply, MODE_CHOICES, modeMenuLabel, questionCopy } from "./agent-core";
 
-const q = (kind: AgentQuestion["kind"], text: string): AgentQuestion => ({ id: "1", kind, client: "an-agent", profile: "web1", session: "s", text });
+const q = (kind: AgentQuestion["kind"], text: string, over: Partial<AgentQuestion> = {}): AgentQuestion =>
+  ({ id: "1", kind, client: "an-agent", profile: "web1", session: "s", text, password: false, confirm: true, ...over });
+
+describe("questions that ask for the master password", () => {
+  it("are plain questions when no password is wanted", () => {
+    expect(questionCopy(q("command", "ls")).needsPassword).toBe(false);
+  });
+
+  it("with only a password to enter, offer just Deny and Allow", () => {
+    const c = questionCopy(q("command", "uptime", { password: true, confirm: false }));
+    expect(c.needsPassword).toBe(true);
+    expect(c.title).toBe("Unlock this terminal for an agent?");
+    expect(c.buttons.map((b) => [b.label, b.decision])).toEqual([["Deny", "deny"], ["Allow", "once"]]);
+    expect(c.note).toMatch(/until the vault locks/);
+    expect(c.code).toBe("uptime");
+  });
+
+  it("with a question and a password together, keep every answer and say the password is needed once", () => {
+    const c = questionCopy(q("command", "uptime", { password: true, confirm: true }));
+    expect(c.needsPassword).toBe(true);
+    expect(c.buttons.map((b) => b.decision)).toEqual(["deny", "once", "session"]);
+    expect(c.note).toMatch(/needed once for this session/);
+    expect(c.title).toBe("Run this command?");
+  });
+
+  it("still explain the symbols in typed input", () => {
+    expect(questionCopy(q("input", "q⏎", { password: true, confirm: false })).note).toContain("⏎ is Enter");
+  });
+
+  it("keep Deny first and the only safe button", () => {
+    const [first, ...rest] = questionCopy(q("command", "x", { password: true, confirm: false })).buttons;
+    expect(first).toMatchObject({ decision: "deny", safe: true });
+    expect(rest.every((b) => !b.safe)).toBe(true);
+  });
+});
 
 describe("questionCopy", () => {
   it("shows a command exactly as given and names who asks and where", () => {

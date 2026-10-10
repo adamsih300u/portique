@@ -60,6 +60,12 @@ pub trait Host: Send + Sync + 'static {
     fn vault_unlocked(&self) -> bool;
     /// Portique's data folder, where the server publishes its address.
     fn data_dir(&self) -> anyhow::Result<std::path::PathBuf>;
+    /// Whether a vault has been made. Without one there is no master password to ask for.
+    fn vault_exists(&self) -> bool;
+    /// Which opening of the vault this is, or `None` while it is locked. The same value later means no lock in between.
+    fn vault_epoch(&self) -> Option<u64>;
+    /// Checks the master password, opening the vault if it is locked. Slow (a key derivation), so not for the main thread.
+    fn check_password(&self, password: &str) -> Result<(), String>;
 }
 
 /// A refusal or failure, worded for the agent that will read it.
@@ -298,9 +304,30 @@ impl Agents {
         }
     }
 
-    /// The person's answer to a question the page showed.
+    /// The person's answer to a question the page showed. A yes to one that asks for the password is refused here.
     pub fn answer(&self, id: &str, decision: Decision) -> bool {
         self.0.approvals.answer(id, decision)
+    }
+
+    /// The person's answer to a question that asks for the master password. A wrong password is an error the dialog shows
+    /// (the question stays open); after `MAX_WRONG` of them it counts as a no. Slow: call it off the main thread.
+    pub fn answer_password(&self, id: &str, decision: Decision, password: &str) -> Result<bool, String> {
+        if decision == Decision::Deny {
+            return Ok(self.0.approvals.answer(id, Decision::Deny));
+        }
+        if !self.0.approvals.is_waiting(id) {
+            return Ok(false);
+        }
+        match self.0.host.check_password(password) {
+            Ok(()) => Ok(self.0.approvals.answer_verified(id, decision)),
+            Err(why) => {
+                if self.0.approvals.wrong_password(id) >= approval::MAX_WRONG {
+                    self.0.approvals.answer(id, Decision::Deny);
+                    return Err("That was the wrong password too many times, so the request was declined.".into());
+                }
+                Err(why)
+            }
+        }
     }
 
     // ---- activity log -----------------------------------------------------------------
@@ -403,6 +430,17 @@ impl Host for AppHost {
     fn data_dir(&self) -> anyhow::Result<std::path::PathBuf> {
         crate::store::data_dir()
     }
+    fn vault_exists(&self) -> bool {
+        crate::vault::global().exists()
+    }
+    fn vault_epoch(&self) -> Option<u64> {
+        crate::vault::global().epoch()
+    }
+    fn check_password(&self, password: &str) -> Result<(), String> {
+        let mut vault = crate::vault::global();
+        let checked = if vault.is_unlocked() { vault.verify(password) } else { vault.unlock(password, false) };
+        checked.map_err(|e| format!("{e:#}"))
+    }
 }
 
 #[cfg(test)]
@@ -420,6 +458,7 @@ pub(crate) mod testing {
         pub auto: Mutex<Option<(Agents, Decision)>>,
         pub vault_open: Mutex<bool>,
         pub data: Mutex<Option<std::path::PathBuf>>,
+        pub vault: Mutex<FakeVault>,
     }
 
     impl FakeHost {
@@ -461,6 +500,38 @@ pub(crate) mod testing {
         }
         fn data_dir(&self) -> anyhow::Result<std::path::PathBuf> {
             self.data.lock().unwrap().clone().ok_or_else(|| anyhow::anyhow!("no data folder in this test"))
+        }
+        fn vault_exists(&self) -> bool {
+            self.vault.lock().unwrap().password.is_some()
+        }
+        fn vault_epoch(&self) -> Option<u64> {
+            self.vault.lock().unwrap().epoch
+        }
+        fn check_password(&self, password: &str) -> Result<(), String> {
+            let mut v = self.vault.lock().unwrap();
+            if v.password.as_deref() != Some(password) {
+                return Err("wrong master password".into());
+            }
+            if v.epoch.is_none() {
+                v.opened += 1;
+                v.epoch = Some(v.opened);
+            }
+            Ok(())
+        }
+    }
+
+    /// A vault that only knows its password and whether it is open.
+    #[derive(Default)]
+    pub struct FakeVault {
+        /// `None`: there is no vault.
+        pub password: Option<String>,
+        pub epoch: Option<u64>,
+        pub opened: u64,
+    }
+
+    impl FakeVault {
+        pub fn lock(&mut self) {
+            self.epoch = None;
         }
     }
 }

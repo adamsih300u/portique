@@ -16,7 +16,7 @@ function accelerator(e: KeyboardEvent): string | null {
 export async function settingsDialog(current: Settings): Promise<Settings | null> {
   const next: Settings = structuredClone(current);
   const shells: LocalShell[] = await api.listLocalShells().catch(() => []);
-  const agents = agentSection(await api.agentStatus().catch(() => null));
+  const agents = agentSection(await api.agentStatus().catch(() => null), current.agent.requirePassword);
 
   const scale = h("select", {},
     h("option", { value: "normal" }, "Normal"), h("option", { value: "large" }, "Large"));
@@ -109,7 +109,10 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
         next.localShells = picks.filter(({ box }) => box.checked).map(({ s }) => s.id);
         await api.setLocalTerminals(next.localTerminals, next.localShells);
         await api.setPrefs(next.restoreTabs, next.sftpLocalDir, next.uiScale, next.vaultIdleMinutes);
-        if (agents.enabled() !== current.agent.enabled) next.agent = { ...next.agent, enabled: (await api.agentSetEnabled(agents.enabled())).enabled };
+        if (agents.enabled() !== current.agent.enabled || agents.requirePassword() !== current.agent.requirePassword) {
+          const status = await api.agentSetEnabled(agents.enabled(), agents.requirePassword());
+          next.agent = { ...next.agent, enabled: status.enabled, requirePassword: agents.requirePassword() };
+        }
         saved = next;
       },
     },

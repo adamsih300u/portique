@@ -56,13 +56,22 @@ pub enum AgentMode {
     Allow,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentSettings {
     /// The MCP server only listens while this is on (off until the user turns it on).
     pub enabled: bool,
+    /// Before an agent first runs anything in a session, the person enters the master password; it holds until the vault
+    /// locks. Applies only when a vault exists. On unless the person turns it off.
+    pub require_password: bool,
     /// Access by profile id (`local:<shell id>` for local terminals); a profile not in here is `Off`.
     pub profiles: std::collections::HashMap<String, AgentMode>,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self { enabled: false, require_password: true, profiles: Default::default() }
+    }
 }
 
 impl AgentSettings {
@@ -203,7 +212,12 @@ mod tests {
     fn agents_start_switched_off_with_no_profile_open_to_them() {
         let s: Settings = serde_json::from_str(r#"{"quake":true}"#).unwrap();
         assert!(!s.agent.enabled);
+        assert!(s.agent.require_password, "the password check is on unless the person turns it off");
         assert_eq!(s.agent.mode("anything"), AgentMode::Off);
+        let before: Settings = serde_json::from_str(r#"{"agent":{"enabled":true,"profiles":{}}}"#).unwrap();
+        assert!(before.agent.require_password, "settings saved before the option existed get the safe value");
+        let off: Settings = serde_json::from_str(r#"{"agent":{"requirePassword":false}}"#).unwrap();
+        assert!(!off.agent.require_password);
         let s: Settings = serde_json::from_str(r#"{"agent":{"enabled":true,"profiles":{"a":"ask","b":"allow"}}}"#).unwrap();
         assert_eq!((s.agent.mode("a"), s.agent.mode("b"), s.agent.mode("z")), (AgentMode::Ask, AgentMode::Allow, AgentMode::Off));
     }

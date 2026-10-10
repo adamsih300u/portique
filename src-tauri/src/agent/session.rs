@@ -82,6 +82,8 @@ pub struct AgentSession {
     pub run: tokio::sync::Mutex<()>,
     /// Where `read_output` goes on from when the agent gives no offset.
     read_cursor: AtomicU64,
+    /// The vault opening (plus one; 0 for none) under which the person entered the master password for this session.
+    proof: AtomicU64,
 }
 
 /// What a tool reports about a session.
@@ -144,6 +146,7 @@ impl AgentSession {
             free: AtomicBool::new(false),
             run: tokio::sync::Mutex::new(()),
             read_cursor: AtomicU64::new(0),
+            proof: AtomicU64::new(0),
         }
     }
 
@@ -259,6 +262,14 @@ impl AgentSession {
 
     pub fn resize(&self, cols: u16, rows: u16) {
         self.lock().transcript.resize(cols, rows);
+    }
+
+    /// Whether the person has entered the master password for this session during the vault's current opening.
+    pub fn proven(&self, epoch: Option<u64>) -> bool {
+        epoch.is_some_and(|e| self.proof.load(Ordering::SeqCst) == e + 1)
+    }
+    pub fn set_proof(&self, epoch: u64) {
+        self.proof.store(epoch + 1, Ordering::SeqCst);
     }
 
     pub fn read_cursor(&self) -> u64 {
@@ -379,6 +390,16 @@ mod tests {
         s.set_paused(true);
         assert_eq!(s.info().controller, "user");
         assert!(i.can_run_commands);
+    }
+
+    #[test]
+    fn a_password_proof_lasts_only_through_one_opening_of_the_vault() {
+        let s = session();
+        assert!(!s.proven(Some(0)) && !s.proven(None));
+        s.set_proof(0);
+        assert!(s.proven(Some(0)), "epoch 0 is a valid opening");
+        assert!(!s.proven(Some(1)), "the vault was locked and opened again");
+        assert!(!s.proven(None), "locked");
     }
 
     #[test]

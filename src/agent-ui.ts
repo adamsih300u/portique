@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { activityLine, endpointNote, MODE_CHOICES, questionCopy } from "./agent-core";
-import { api, type AgentAudit, type AgentConfigKind, type AgentMode, type AgentQuestion, type AgentStatus, type Profile, type Protocol } from "./api";
+import { api, type AgentAudit, type AgentConfigKind, type AgentDecision, type AgentMode, type AgentQuestion, type AgentStatus, type Profile, type Protocol } from "./api";
 import { field, h, modal } from "./ui";
 
 /** An agent opened a session; the app shows it in a tab. */
@@ -37,19 +37,33 @@ function present() {
   if (shown || !queue.length) return;
   const q = queue.shift()!;
   const c = questionCopy(q);
+  // A question that wants the master password gets a box for it; only a correct password can allow it.
+  const pw = c.needsPassword
+    ? h("input", { type: "password", class: "agent-password", autocomplete: "off", placeholder: "Master password", "aria-label": "Master password" })
+    : null;
+  const problem = h("p", { class: "warn agent-note" });
   const buttons = c.buttons.map((b) =>
-    h("button", { class: b.safe ? "primary" : "", disabled: !b.safe, onclick: () => answer(b.decision) }, b.label));
+    h("button", { class: b.safe ? "primary" : "", disabled: !b.safe, onclick: () => (b.safe || !pw ? answer(b.decision) : void allow(b.decision)) }, b.label));
   const overlay = h("div", { class: "overlay" },
     h("div", { class: "modal agent-ask", role: "alertdialog", "aria-modal": "true" },
       h("h2", {}, c.title),
       h("div", { class: "modal-body" },
         h("p", { class: "agent-lead" }, c.lead),
         h("pre", { class: "agent-text" }, c.code), // text from the agent: never markup
-        c.note ? h("p", { class: "agent-note" }, c.note) : null),
+        c.note ? h("p", { class: "agent-note" }, c.note) : null,
+        pw,
+        problem),
       h("div", { class: "modal-buttons" }, ...buttons)));
-  const settle = window.setTimeout(() => buttons.forEach((b) => (b.disabled = false)), SETTLE_MS);
+  const settle = window.setTimeout(() => {
+    buttons.forEach((b) => (b.disabled = false));
+    pw?.focus(); // not before: keys meant for the terminal behind the dialog must not land in the box
+  }, SETTLE_MS);
+  let done = false;
   const close = () => {
+    if (done) return; // the backend's "closed" can arrive just after our own answer
+    done = true;
     clearTimeout(settle);
+    if (pw) pw.value = "";
     overlay.remove();
     shown = null;
     present();
@@ -58,6 +72,28 @@ function present() {
     void api.agentAnswer(q.id, decision).catch(() => {});
     close();
   };
+  /** Sends the password with the answer. A wrong one is shown here and the question stays open. */
+  const allow = async (decision: AgentDecision) => {
+    if (!pw?.value) {
+      problem.textContent = "Enter your master password to allow it.";
+      pw?.focus();
+      return;
+    }
+    problem.textContent = "Checking…";
+    buttons.forEach((b) => (b.disabled = true));
+    try {
+      await api.agentAnswerPassword(q.id, decision, pw.value);
+      close();
+    } catch (e) {
+      problem.textContent = String(e);
+      pw.value = "";
+      buttons.forEach((b) => (b.disabled = false));
+      pw.focus();
+    }
+  };
+  pw?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !buttons[1].disabled) buttons[1].click();
+  });
   overlay.addEventListener("keydown", (e) => e.key === "Escape" && answer("deny"));
   shown = { id: q.id, close };
   document.body.append(overlay);
@@ -140,8 +176,9 @@ export async function agentConfigDialog(kind: AgentConfigKind = "stdio") {
 }
 
 /** The settings pane's block for agent access. `enabled()` is what the box says now; the pane applies it on Save. */
-export function agentSection(status: AgentStatus | null) {
+export function agentSection(status: AgentStatus | null, requirePassword: boolean) {
   const on = h("input", { type: "checkbox", checked: status?.enabled ?? false });
+  const needPw = h("input", { type: "checkbox", checked: requirePassword });
   const note = h("small", { class: "agent-note" }, endpointNote(status?.enabled ?? false, status?.endpoint?.url ?? null));
   const buttons = h("div", { class: "agent-buttons" },
     h("button", { type: "button", onclick: () => void agentConfigDialog() }, "Connect an agent…"),
@@ -156,6 +193,8 @@ export function agentSection(status: AgentStatus | null) {
     h("label", { class: "check" }, on, " Let AI agents use terminals (MCP)"),
     note,
     h("small", { class: "agent-note" }, "Agents can only use profiles you switch on (right-click a profile → Agent access), only in sessions they open themselves, and you watch each one in a tab."),
+    h("label", { class: "check" }, needPw, " Ask for my password before an agent runs commands"),
+    h("small", { class: "agent-note" }, "Once per session, until the vault locks. It uses your master password, so it applies once you have a vault."),
     buttons);
-  return { el, enabled: () => on.checked };
+  return { el, enabled: () => on.checked, requirePassword: () => needPw.checked };
 }
