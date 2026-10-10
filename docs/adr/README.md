@@ -46,5 +46,6 @@ Style, so a record reads in under a minute:
 | [0012](0012-server-changes-show-their-command-first.md) | A server tool that changes something shows its command first and never enters a password | accepted |
 | [0013](0013-older-vault-is-refused.md) | A vault older than the last one opened is refused | accepted |
 | [0014](0014-secrets-sealed-in-memory.md) | Secrets stay sealed in memory and open one at a time | accepted |
+| [0015](0015-keys-pinned-and-process-hardened.md) | Vault keys live in locked pages and release builds refuse same-user debugging | accepted |
 
 The same decisions are summarised for agents under *Standing decisions* in [AGENTS.md](../../AGENTS.md).

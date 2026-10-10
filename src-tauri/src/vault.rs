@@ -8,11 +8,13 @@
 //! highest one it has opened in a small file outside the portable set (`vault.seen`), so a
 //! restored older `vault.bin` is noticed instead of silently decrypting.
 //! While unlocked, each secret is kept sealed in memory under a random per-unlock key and is
-//! opened one at a time, for as long as it is being used, then zeroized.
+//! opened one at a time, for as long as it is being used, then zeroized. Both keys (the file key
+//! and that per-unlock key) live in locked pages of their own (see `memguard`), so they are not
+//! swapped out or written to a core dump.
 //! Only symmetric primitives are used, so there is nothing for Shor's algorithm to break;
 //! Grover's algorithm leaves a 256-bit key with ~128 bits of strength.
 
-use crate::store;
+use crate::{memguard::LockedKey, store};
 use anyhow::{anyhow, bail, Context, Result};
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -49,7 +51,7 @@ pub struct Strength {
 
 /// Rates `password`. Only the first 128 characters are scored, which keeps the estimator fast on pasted text.
 pub fn assess(password: &str) -> Strength {
-    let head: String = password.chars().take(128).collect();
+    let head: Zeroizing<String> = Zeroizing::new(password.chars().take(128).collect());
     let est = zxcvbn::zxcvbn(&head, &["portique", "termix", "vault"]);
     let score = u8::from(est.score());
     let advice = est
@@ -132,16 +134,14 @@ impl Drop for Data {
 /// nonce, the secret's name as associated data) under `shield`, a random key made at unlock that
 /// never touches disk. Only the secret being used is ever plain text, and only briefly.
 struct Secrets {
-    shield: Zeroizing<[u8; 32]>,
+    shield: LockedKey,
     /// name -> nonce followed by ciphertext.
     items: HashMap<String, Vec<u8>>,
 }
 
 impl Secrets {
     fn new() -> Result<Self> {
-        let mut shield = Zeroizing::new([0u8; 32]);
-        getrandom::fill(&mut *shield).map_err(|e| anyhow!("no randomness available: {e}"))?;
-        Ok(Self { shield, items: HashMap::new() })
+        Ok(Self { shield: LockedKey::random()?, items: HashMap::new() })
     }
 
     /// Seals every value of `data`; the plain copies are zeroized when `data` drops.
@@ -157,7 +157,7 @@ impl Secrets {
 
     fn insert(&mut self, name: &str, value: &str) -> Result<()> {
         let nonce = XNonce::generate();
-        let ct = XChaCha20Poly1305::new((&*self.shield).into())
+        let ct = XChaCha20Poly1305::new(self.shield.as_array().into())
             .encrypt(&nonce, Payload { msg: value.as_bytes(), aad: name.as_bytes() })
             .map_err(|_| anyhow!("encryption failed"))?;
         let mut blob = nonce.to_vec();
@@ -176,7 +176,7 @@ impl Secrets {
         let (nonce, ct) = blob.split_at(24);
         let nonce = XNonce::try_from(nonce).map_err(|_| corrupt())?;
         let plain = Zeroizing::new(
-            XChaCha20Poly1305::new((&*self.shield).into())
+            XChaCha20Poly1305::new(self.shield.as_array().into())
                 .decrypt(&nonce, Payload { msg: ct, aad: name.as_bytes() })
                 .map_err(|_| corrupt())?,
         );
@@ -196,7 +196,7 @@ impl Secrets {
 }
 
 struct Unlocked {
-    key: Zeroizing<[u8; 32]>,
+    key: LockedKey,
     kdf: Kdf,
     salt: Vec<u8>,
     secrets: Secrets,
@@ -211,13 +211,25 @@ pub struct Vault {
     state: Option<Unlocked>,
 }
 
-fn derive(password: &str, salt: &[u8], kdf: &Kdf) -> Result<Zeroizing<[u8; 32]>> {
+fn derive(password: &str, salt: &[u8], kdf: &Kdf) -> Result<LockedKey> {
     let params = Params::new(kdf.m, kdf.t, kdf.p, Some(32)).map_err(|e| anyhow!("bad KDF parameters: {e}"))?;
-    let mut key = Zeroizing::new([0u8; 32]);
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(password.as_bytes(), salt, &mut *key)
-        .map_err(|e| anyhow!("key derivation failed: {e}"))?;
+    let mut key = LockedKey::new();
+    // Written straight into the locked page, never staged in an ordinary buffer.
+    key.fill(|out| {
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+            .hash_password_into(password.as_bytes(), salt, out)
+            .map_err(|e| anyhow!("key derivation failed: {e}"))
+    })?;
     Ok(key)
+}
+
+impl Unlocked {
+    /// Says so on stderr if a key could not be pinned in RAM; the vault works either way.
+    fn note_if_unpinned(&self) {
+        if !(self.key.is_locked() && self.secrets.shield.is_locked()) {
+            eprintln!("note: could not lock the vault's keys in memory; they may be swapped out under pressure");
+        }
+    }
 }
 
 impl Vault {
@@ -262,7 +274,9 @@ impl Vault {
         let mut salt = vec![0u8; 16];
         getrandom::fill(&mut salt).map_err(|e| anyhow!("no randomness available: {e}"))?;
         let key = derive(password, &salt, &kdf)?;
-        self.state = Some(Unlocked { key, kdf, salt, secrets: Secrets::new()?, generation: 0, last_used: Instant::now() });
+        let st = Unlocked { key, kdf, salt, secrets: Secrets::new()?, generation: 0, last_used: Instant::now() };
+        st.note_if_unpinned();
+        self.state = Some(st);
         self.save()?;
         // A new vault starts a new history, whatever an earlier one left behind.
         let generation = self.unlocked()?.generation;
@@ -287,7 +301,7 @@ impl Vault {
         let nonce = XNonce::try_from(nonce_bytes.as_slice()).map_err(|_| anyhow!("vault file is corrupt"))?;
         let ct = B64.decode(&env.ciphertext)?;
         let key = derive(password, &salt, &env.kdf)?;
-        let cipher = XChaCha20Poly1305::new((&*key).into());
+        let cipher = XChaCha20Poly1305::new(key.as_array().into());
         let aad = Envelope::aad(env.version, &env.kdf, &salt);
         let plain = Zeroizing::new(
             cipher
@@ -311,6 +325,7 @@ impl Vault {
             );
         }
         self.record_seen(found);
+        st.note_if_unpinned();
         self.state = Some(st);
         Ok(())
     }
@@ -398,7 +413,7 @@ impl Vault {
         let plain = Zeroizing::new(serde_json::to_vec(&st.secrets.to_data(st.generation)?)?);
         let nonce = XNonce::generate();
         let aad = Envelope::aad(VERSION, &st.kdf, &st.salt);
-        let ct = XChaCha20Poly1305::new((&*st.key).into())
+        let ct = XChaCha20Poly1305::new(st.key.as_array().into())
             .encrypt(&nonce, Payload { msg: &plain, aad: &aad })
             .map_err(|_| anyhow!("encryption failed"))?;
         let env = Envelope {
@@ -634,10 +649,10 @@ mod tests {
         let (_d, mut v) = vault();
         v.create(PW, FAST).unwrap();
         v.set("a", "first").unwrap();
-        let shield = *sealed(&v).shield;
+        let shield = *sealed(&v).shield.as_array();
         v.lock();
         v.unlock(PW, false).unwrap();
-        assert_ne!(shield, *sealed(&v).shield);
+        assert_ne!(shield, *sealed(&v).shield.as_array());
         let blob = sealed(&v).items["a"].clone();
         v.change_password(PW, PW2).unwrap();
         assert_eq!(sealed(&v).items["a"], blob, "a password change should not touch sealed secrets");

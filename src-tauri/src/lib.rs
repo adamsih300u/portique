@@ -1,6 +1,7 @@
 mod http;
 mod keys;
 mod local;
+mod memguard;
 mod serial;
 mod sftp;
 mod session;
@@ -15,6 +16,7 @@ mod window;
 use serde::Serialize;
 use session::{Ctl, Emitter, Params, Sessions};
 use store::{Profile, Theme};
+use zeroize::Zeroizing;
 use tauri::{
     ipc::{Channel, InvokeResponseBody},
     State,
@@ -204,13 +206,13 @@ fn vault_status() -> VaultStatus {
 
 /// Live strength rating for the password dialogs. The backend re-checks on create and change.
 #[tauri::command]
-fn vault_password_strength(password: String) -> vault::Strength {
+fn vault_password_strength(password: Zeroizing<String>) -> vault::Strength {
     vault::assess(&password)
 }
 
 /// Argon2 is deliberately slow and memory-hungry, so run it off the UI thread.
 #[tauri::command]
-async fn vault_create(password: String) -> Res<()> {
+async fn vault_create(password: Zeroizing<String>) -> Res<()> {
     tauri::async_runtime::spawn_blocking(move || vault::global().create(&password, vault::Kdf::DEFAULT))
         .await
         .map_err(|e| e.to_string())?
@@ -218,7 +220,7 @@ async fn vault_create(password: String) -> Res<()> {
 }
 
 #[tauri::command]
-async fn vault_unlock(password: String, accept_older: bool) -> Res<()> {
+async fn vault_unlock(password: Zeroizing<String>, accept_older: bool) -> Res<()> {
     tauri::async_runtime::spawn_blocking(move || vault::global().unlock(&password, accept_older))
         .await
         .map_err(|e| e.to_string())?
@@ -236,7 +238,7 @@ fn vault_touch() {
 }
 
 #[tauri::command]
-async fn vault_change_password(old: String, new: String) -> Res<()> {
+async fn vault_change_password(old: Zeroizing<String>, new: Zeroizing<String>) -> Res<()> {
     tauri::async_runtime::spawn_blocking(move || vault::global().change_password(&old, &new))
         .await
         .map_err(|e| e.to_string())?
@@ -246,7 +248,7 @@ async fn vault_change_password(old: String, new: String) -> Res<()> {
 // ---- saved passwords (write-only from the UI) -------------------------------
 
 #[tauri::command]
-fn set_password(profile_id: String, password: String) -> Res<()> {
+fn set_password(profile_id: String, password: Zeroizing<String>) -> Res<()> {
     let mut v = vault::global();
     let acct = vault::password_account(&profile_id);
     if password.is_empty() { v.delete(&acct) } else { v.set(&acct, &password) }.map_err(err)
@@ -282,8 +284,8 @@ fn key_public(id: String) -> Res<keys::PublicKey> {
 }
 
 #[tauri::command]
-fn import_key(name: String, pem: String, passphrase: Option<String>) -> Res<keys::KeyInfo> {
-    keys::import(&name, &pem, passphrase.as_deref().filter(|s| !s.is_empty())).map_err(err)
+fn import_key(name: String, pem: Zeroizing<String>, passphrase: Option<Zeroizing<String>>) -> Res<keys::KeyInfo> {
+    keys::import(&name, &pem, passphrase.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())).map_err(err)
 }
 
 #[tauri::command]
@@ -455,8 +457,8 @@ fn connect_session(
     profile_id: String,
     cols: u16,
     rows: u16,
-    password: Option<String>,
-    passphrase: Option<String>,
+    password: Option<Zeroizing<String>>,
+    passphrase: Option<Zeroizing<String>>,
     on_event: Channel<InvokeResponseBody>,
 ) -> Res<String> {
     let profile = store::get_profile(&profile_id).map_err(err)?;
@@ -492,8 +494,8 @@ fn session_close(sessions: State<'_, Sessions>, id: String) {
 fn connect_sftp(
     sessions: State<'_, Sessions>,
     profile_id: String,
-    password: Option<String>,
-    passphrase: Option<String>,
+    password: Option<Zeroizing<String>>,
+    passphrase: Option<Zeroizing<String>>,
     on_event: Channel<InvokeResponseBody>,
 ) -> Res<String> {
     let profile = store::get_profile(&profile_id).map_err(err)?;
@@ -510,8 +512,8 @@ fn connect_sftp(
 fn connect_proxy(
     sessions: State<'_, Sessions>,
     profile_id: String,
-    password: Option<String>,
-    passphrase: Option<String>,
+    password: Option<Zeroizing<String>>,
+    passphrase: Option<Zeroizing<String>>,
     on_event: Channel<InvokeResponseBody>,
 ) -> Res<String> {
     let profile = store::get_profile(&profile_id).map_err(err)?;
@@ -617,6 +619,7 @@ async fn local_delete(path: String) -> Res<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    memguard::harden_process();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

@@ -6,6 +6,7 @@ use serde_json::json;
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use zeroize::Zeroizing;
 
 /// Frames sent to the frontend: first byte 0 = terminal data, 1 = JSON status.
 #[derive(Clone)]
@@ -92,8 +93,8 @@ pub struct Params {
     pub sessions: Sessions,
     pub cols: u16,
     pub rows: u16,
-    pub password: Option<String>,
-    pub passphrase: Option<String>,
+    pub password: Option<Zeroizing<String>>,
+    pub passphrase: Option<Zeroizing<String>>,
     /// Open an SFTP file browser instead of a shell (SSH profiles only).
     pub sftp: bool,
     /// Offer a local SOCKS5 proxy through the server instead of a shell (SSH profiles only).
@@ -150,7 +151,7 @@ pub fn start(
 /// Watches output for `login:` / `password:` style prompts and types saved credentials once each.
 pub struct AutoLogin {
     username: Option<String>,
-    password: Option<String>,
+    password: Option<Zeroizing<String>>,
     tail: Vec<u8>,
     deadline: std::time::Instant,
 }
@@ -159,7 +160,7 @@ pub struct AutoLogin {
 const AUTOLOGIN_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl AutoLogin {
-    pub fn new(username: Option<String>, password: Option<String>) -> Self {
+    pub fn new(username: Option<String>, password: Option<Zeroizing<String>>) -> Self {
         Self {
             username: username.filter(|s| !s.is_empty()),
             password: password.filter(|s| !s.is_empty()),
@@ -188,14 +189,14 @@ impl AutoLogin {
         }
         if self.password.is_some() && t.ends_with("password:") {
             self.tail.clear();
-            return Some(format!("{}\r", self.password.take().unwrap()).into_bytes());
+            let pw = self.password.take().unwrap();
+            return Some(format!("{}\r", pw.as_str()).into_bytes());
         }
         None
     }
 }
 
-pub fn saved_password(p: &Profile, override_pw: &Option<String>) -> Option<String> {
-    override_pw
-        .clone()
-        .or_else(|| crate::vault::global().get(&crate::vault::password_account(&p.id)).ok().flatten().map(|v| (*v).clone()))
+/// The password typed for this attempt, else the saved one. Either way the copy wipes itself on drop.
+pub fn saved_password(p: &Profile, override_pw: &Option<Zeroizing<String>>) -> Option<Zeroizing<String>> {
+    override_pw.clone().or_else(|| crate::vault::global().get(&crate::vault::password_account(&p.id)).ok().flatten())
 }

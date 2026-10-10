@@ -373,7 +373,7 @@ async fn authenticate(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> 
 
 async fn key_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<russh::client::AuthResult> {
     let key_id = p.key_id.as_deref().context("no key assigned to this profile")?;
-    let key = match keys::load(key_id, params.passphrase.as_deref()) {
+    let key = match keys::load(key_id, params.passphrase.as_ref().map(|s| s.as_str())) {
         Ok(k) => k,
         Err(_) if params.passphrase.is_none() && keys::needs_passphrase(key_id)? => {
             return Err(NeedsInput("passphrase").into());
@@ -386,7 +386,8 @@ async fn key_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Resu
 
 async fn password_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<()> {
     let pw = saved_password(p, &params.password).ok_or(NeedsInput("password"))?;
-    if s.authenticate_password(&p.username, &pw).await?.success() {
+    // russh takes the password by value (and wipes its own copy once sent), so hand it a copy.
+    if s.authenticate_password(&p.username, pw.as_str()).await?.success() {
         return Ok(());
     }
     // Many servers expose passwords only through keyboard-interactive.
@@ -396,7 +397,7 @@ async fn password_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) ->
             KeyboardInteractiveAuthResponse::Success => return Ok(()),
             KeyboardInteractiveAuthResponse::Failure { .. } => break,
             KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                r = s.authenticate_keyboard_interactive_respond(prompts.iter().map(|_| pw.clone()).collect()).await?;
+                r = s.authenticate_keyboard_interactive_respond(prompts.iter().map(|_| pw.to_string()).collect()).await?;
             }
         }
     }

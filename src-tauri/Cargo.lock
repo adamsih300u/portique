@@ -94,6 +94,7 @@ dependencies = [
  "blake2",
  "cpufeatures 0.3.1",
  "password-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -3827,6 +3828,7 @@ dependencies = [
  "chacha20poly1305",
  "dirs",
  "getrandom 0.4.3",
+ "libc",
  "portable-pty",
  "reqwest",
  "russh",
@@ -7046,6 +7048,9 @@ name = "zeroize"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "zerotrie"
