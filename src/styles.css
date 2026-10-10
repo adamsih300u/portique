@@ -72,6 +72,11 @@ main { background: var(--bg); color: var(--text); display: flex; flex-direction:
 .modal h3 { margin: 16px 0 8px; font: 600 var(--fs-label)/1.2 var(--display); font-variant-caps: all-small-caps; color: var(--accent); letter-spacing: .12em; }
 .modal-body { overflow: auto; flex: 1; padding: 3px 7px 3px 3px; margin-left: -3px; } /* room for the focus ring, which overflow would clip */
 .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.pw-meter { margin: -2px 0 8px; } .pw-meter-bar { height: 3px; border-radius: 2px; background: var(--line); position: relative; overflow: hidden; }
+.pw-meter-bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 0; background: var(--danger); transition: width .15s; }
+.pw-meter-bar[data-score="0"]::after { width: 10%; } .pw-meter-bar[data-score="1"]::after { width: 30%; } .pw-meter-bar[data-score="2"]::after { width: 55%; background: var(--warn); }
+.pw-meter-bar[data-score="3"]::after { width: 80%; background: var(--warn); } .pw-meter-bar[data-score="4"]::after { width: 100%; background: var(--ok); }
+.pw-meter-text { color: var(--muted); font-size: calc(11px * var(--s)); display: block; margin-top: 3px; min-height: 1.3em; }
 .modal-error { color: var(--danger); margin-top: 8px; white-space: pre-wrap; } .modal-error:empty { display: none; }
 .field { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; } .field > span { color: var(--muted); font-size: var(--fs-sm); } .field small, .muted { color: var(--muted); font-size: var(--fs-xs); }
 .field input, .field select { width: 100%; }

@@ -1,4 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { invokeSecret } from "./secret-ipc";
 import { type ApiSettings, defaultApiSettings, sanitizeApiSettings } from "./http-model";
 import { type SavedCommand, sanitizeCommands } from "./saved-commands";
 
@@ -190,6 +191,14 @@ export interface UiColours {
   plainTabs: boolean;
 }
 
+export interface PasswordStrength {
+  /** 0 (guessable at once) to 4 (very unlikely to be guessed). */
+  score: number;
+  /** True when the vault would accept it. */
+  ok: boolean;
+  advice: string;
+}
+
 export interface VaultStatus {
   exists: boolean;
   unlocked: boolean;
@@ -257,11 +266,15 @@ export interface ToolPorts {
 
 export const api = {
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
-  vaultCreate: (password: string) => invoke<void>("vault_create", { password }),
-  vaultUnlock: (password: string) => invoke<void>("vault_unlock", { password }),
+  // The master password goes to Rust as raw bytes that are zeroed afterwards, not as JSON.
+  vaultCreate: (password: string) => invokeSecret<void>("vault_create", [password]),
+  /** `acceptOlder` opens a vault whose saved version is behind the last one this computer opened. */
+  vaultUnlock: (password: string, acceptOlder = false) =>
+    invokeSecret<void>("vault_unlock", [password], { "accept-older": String(acceptOlder) }),
+  vaultPasswordStrength: (password: string) => invokeSecret<PasswordStrength>("vault_password_strength", [password]),
   vaultLock: () => invoke<void>("vault_lock"),
   vaultTouch: () => invoke<void>("vault_touch"),
-  vaultChangePassword: (old: string, nw: string) => invoke<void>("vault_change_password", { old, new: nw }),
+  vaultChangePassword: (old: string, nw: string) => invokeSecret<void>("vault_change_password", [old, nw]),
   listProfiles: async () => (await invoke<Profile[]>("list_profiles")).map(withDefaults),
   saveProfile: async (profile: Profile) => withDefaults(await invoke<Profile>("save_profile", { profile })),
   deleteProfile: (id: string) => invoke<void>("delete_profile", { id }),

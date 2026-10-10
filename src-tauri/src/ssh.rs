@@ -373,7 +373,7 @@ async fn authenticate(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> 
 
 async fn key_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<russh::client::AuthResult> {
     let key_id = p.key_id.as_deref().context("no key assigned to this profile")?;
-    let key = match keys::load(key_id, params.passphrase.as_deref()) {
+    let key = match keys::load(key_id, params.passphrase.as_ref().map(|s| s.as_str())) {
         Ok(k) => k,
         Err(_) if params.passphrase.is_none() && keys::needs_passphrase(key_id)? => {
             return Err(NeedsInput("passphrase").into());
@@ -386,7 +386,8 @@ async fn key_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Resu
 
 async fn password_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<()> {
     let pw = saved_password(p, &params.password).ok_or(NeedsInput("password"))?;
-    if s.authenticate_password(&p.username, &pw).await?.success() {
+    // russh takes the password by value (and wipes its own copy once sent), so hand it a copy.
+    if s.authenticate_password(&p.username, pw.as_str()).await?.success() {
         return Ok(());
     }
     // Many servers expose passwords only through keyboard-interactive.
@@ -396,7 +397,7 @@ async fn password_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) ->
             KeyboardInteractiveAuthResponse::Success => return Ok(()),
             KeyboardInteractiveAuthResponse::Failure { .. } => break,
             KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                r = s.authenticate_keyboard_interactive_respond(prompts.iter().map(|_| pw.clone()).collect()).await?;
+                r = s.authenticate_keyboard_interactive_respond(prompts.iter().map(|_| pw.to_string()).collect()).await?;
             }
         }
     }
@@ -493,7 +494,7 @@ mod tests {
         let env = |k: &str| std::env::var(k).unwrap();
         let (port, jump_port): (u16, u16) = (env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), env("PORTIQUE_TEST_JUMP_PORT").parse().unwrap());
         let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let key = keys::import("test", &pem, None).unwrap();
 
         // A TCP echo server standing in for "the service behind the server".
@@ -581,7 +582,7 @@ mod tests {
     async fn dropped_connection_is_reported_as_lost() {
         let env = |k: &str| std::env::var(k).unwrap();
         let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let key = keys::import("test", &pem, None).unwrap();
         let p = Profile {
             host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
@@ -619,7 +620,7 @@ mod tests {
         let port: u16 = std::env::var("PORTIQUE_TEST_SSH_PORT").unwrap().parse().unwrap();
         let user = std::env::var("PORTIQUE_TEST_SSH_USER").unwrap();
         let pem = std::fs::read_to_string(std::env::var("PORTIQUE_TEST_SSH_KEY").unwrap()).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let info = keys::import("test", &pem, None).unwrap();
 
         let out = Arc::new(StdMutex::new(Vec::<u8>::new()));
