@@ -6,8 +6,10 @@
 //! program running as the same user cannot attach a debugger or read `/proc/<pid>/mem`.
 //!
 //! Locking is best effort: if the system refuses (a low `RLIMIT_MEMLOCK`, say) the key still
-//! works and `is_locked` says false. Windows and macOS keep the key wiped on drop but do not pin
-//! it yet; that needs `VirtualLock` and a Windows build to check it against.
+//! works and `is_locked` says false. On Windows the page is pinned with `VirtualLock`, after
+//! raising the process's minimum working set if the default is too small to hold it, and the
+//! heap is left out of crash reports. Windows has no per-page dump exclusion, so a full memory
+//! dump taken by a debugger or tool outside Windows Error Reporting still contains the page.
 
 use anyhow::{anyhow, Result};
 use std::{
@@ -25,6 +27,19 @@ fn page_size() -> usize {
         let n = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if n > 0 {
             return n as usize;
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+        // SAFETY: GetSystemInfo fills the struct we give it and cannot fail.
+        let info = unsafe {
+            let mut info: SYSTEM_INFO = std::mem::zeroed();
+            GetSystemInfo(&mut info);
+            info
+        };
+        if info.dwPageSize > 0 {
+            return info.dwPageSize as usize;
         }
     }
     4096
@@ -114,18 +129,51 @@ fn unlock(page: *mut u8, size: usize) {
     unsafe { libc::munlock(page.cast(), size) };
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn lock(page: *mut u8, size: usize) -> bool {
+    use windows_sys::Win32::System::{
+        Memory::{GetProcessWorkingSetSizeEx, SetProcessWorkingSetSizeEx, VirtualLock},
+        Threading::GetCurrentProcess,
+    };
+    // SAFETY: `page` is a live allocation of `size` bytes; the other calls take a handle to this process.
+    unsafe {
+        if VirtualLock(page.cast(), size) != 0 {
+            return true;
+        }
+        // The usual failure is the working-set quota: locked pages must fit in the process's
+        // minimum working set, which starts small. Make room for this page and try once more.
+        let process = GetCurrentProcess();
+        let (mut min, mut max, mut flags) = (0usize, 0usize, 0u32);
+        if GetProcessWorkingSetSizeEx(process, &mut min, &mut max, &mut flags) == 0 {
+            return false;
+        }
+        if SetProcessWorkingSetSizeEx(process, min + size, max.max(min + size) + size, flags) == 0 {
+            return false;
+        }
+        VirtualLock(page.cast(), size) != 0
+    }
+}
+
+#[cfg(windows)]
+fn unlock(page: *mut u8, size: usize) {
+    use windows_sys::Win32::System::Memory::VirtualUnlock;
+    // SAFETY: undoes the `VirtualLock` above on the same range.
+    unsafe { VirtualUnlock(page.cast(), size) };
+}
+
+#[cfg(not(any(unix, windows)))]
 fn lock(_page: *mut u8, _size: usize) -> bool {
     false
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn unlock(_page: *mut u8, _size: usize) {}
 
 /// Set by the user to keep debuggers and core dumps working, for example to diagnose a crash.
 pub const ALLOW_DEBUG_ENV: &str = "PORTIQUE_ALLOW_DEBUG";
 
-/// Turns off core dumps and, on Linux, same-user debugging and memory reads. Returns whether it
+/// Turns off core dumps and, on Linux, same-user debugging and memory reads; on Windows it keeps
+/// the heap out of crash reports. Returns whether it
 /// ran. Release builds only, unless nothing is set: development needs a debugger.
 pub fn harden_process() -> bool {
     if cfg!(debug_assertions) || std::env::var_os(ALLOW_DEBUG_ENV).is_some() {
@@ -146,7 +194,14 @@ fn apply() {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn apply() {
+    use windows_sys::Win32::System::ErrorReporting::{WerSetFlags, WER_FAULT_REPORTING_FLAG_NOHEAP};
+    // SAFETY: plain call with a valid flag. A failure only means less protection.
+    unsafe { WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP) };
+}
+
+#[cfg(not(any(unix, windows)))]
 fn apply() {}
 
 #[cfg(test)]
@@ -204,6 +259,14 @@ mod tests {
         // Other tests hold locked pages too, so compare against our own contribution only.
         assert!(locked_kib() >= (page_size() / 1024) as u64);
         drop(k);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_pins_several_pages_even_past_the_default_working_set() {
+        // The default minimum working set is a few hundred KiB; this needs the retry path to succeed.
+        let keys: Vec<_> = (0..200).map(|_| LockedKey::new()).collect();
+        assert!(keys.iter().all(|k| k.is_locked()));
     }
 
     #[cfg(target_os = "linux")]

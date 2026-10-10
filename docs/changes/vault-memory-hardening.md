@@ -16,11 +16,11 @@ The vault's two keys are now pinned in RAM and left out of core dumps, release b
 
 ## What changed
 
-- New `memguard.rs`. `LockedKey` holds a 256-bit key alone in its own page: `mlock`ed, excluded from core dumps and zeroed in a forked child (Linux), wiped before it is freed. `harden_process` zeroes the core-dump limit and, on Linux, sets the process non-dumpable.
+- New `memguard.rs`. `LockedKey` holds a 256-bit key alone in its own page: `mlock`ed, excluded from core dumps and zeroed in a forked child (Linux), or `VirtualLock`ed with a working-set raise and one retry (Windows), and wiped before it is freed. `harden_process` zeroes the core-dump limit and, on Linux, sets the process non-dumpable; on Windows it keeps the heap out of crash reports.
 - `vault.rs`: the file key and the per-unlock key are `LockedKey`. Argon2 writes the file key straight into its page. The strength check wipes its copy of the password. A note goes to stderr if a page could not be pinned.
 - `lib.rs`: `run` calls `harden_process` first, in release builds only. The vault, saved-password, key-import and connect commands take `Zeroizing<String>`, so the copy Rust receives is wiped on drop.
 - `session.rs`, `ssh.rs`: `Params`, `AutoLogin` and `saved_password` carry `Zeroizing<String>`; the saved password is no longer cloned into a plain `String` on the way to the login.
-- `Cargo.toml`: `libc` on Unix; `zeroize` with `serde`; `argon2` with `zeroize`, which wipes its 128 MiB work memory after each derivation.
+- `Cargo.toml`: `libc` on Unix; `windows-sys` on Windows (already in the lockfile at 0.59); `zeroize` with `serde`; `argon2` with `zeroize`, which wipes its 128 MiB work memory after each derivation.
 
 ## How to review
 
@@ -28,12 +28,13 @@ The vault's two keys are now pinned in RAM and left out of core dumps, release b
 
 ## What was tested
 
-`cargo test --lib`: 47 passed, 4 ignored (they need a local sshd; not run). The 7 new tests check that a key is written and read in place, that random keys differ, that each key has its own page, that `VmLck` in `/proc` rises while a key is held (locking really happened on this machine), and that hardening sets the core limit to zero and the process to non-dumpable. `cargo clippy --all-targets` is clean. I did not run the app (no display here), a release build, or anything on Windows or macOS.
+`cargo test --lib`: 47 passed, 4 ignored (they need a local sshd; not run). The 7 new tests check that a key is written and read in place, that random keys differ, that each key has its own page, that `VmLck` in `/proc` rises while a key is held (locking really happened on this machine), and that hardening sets the core limit to zero and the process to non-dumpable. `cargo clippy --all-targets` is clean. I built the Windows target (`x86_64-pc-windows-gnu`): `cargo clippy --all-targets` is clean and the test binary compiles and links. I did not run it (no Wine here), so whether `VirtualLock` succeeds on real Windows is unchecked; a Windows-only test, `windows_pins_several_pages_even_past_the_default_working_set`, will say. I also did not run the app (no display here), a release build, or anything on macOS.
 
 ## Not done / follow-ups
 
 - **The non-dumpable setting is untested against the real window.** It should not matter to WebKitGTK's child processes, but I could not start the app to check. Try a release build on Linux before merging; `PORTIQUE_ALLOW_DEBUG=1` turns it off.
-- **Windows and macOS do not pin pages** (`VirtualLock` needs a Windows build to check) and macOS lacks the debugger refusal (`PT_DENY_ATTACH`). Separate branch.
+- **Windows pinning is compiled, not run.** Run `cargo test --lib memguard` on a Windows machine. Windows also has no per-page dump exclusion, and no equivalent of the Linux debugger refusal is set.
+- **macOS does not pin pages** and lacks the debugger refusal (`PT_DENY_ATTACH`). Separate branch, since it needs a Mac to check.
 - **Copies we cannot wipe:** Tauri parses each request's JSON before our code sees it, the webview holds what the user typed, the AEAD cipher and zxcvbn make internal copies, and the SSH library and API sender keep the plain value for the length of a request. russh wipes its own password copy once sent. Sending secrets as raw bytes the page can zero (instead of JSON) would close part of the IPC gap.
 - The terminal auto-login for Telnet and serial still builds the typed line as a plain `Vec<u8>` for the output channel.
 - Hibernation images are not covered by `mlock`.
