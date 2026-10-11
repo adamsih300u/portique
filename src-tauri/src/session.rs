@@ -112,6 +112,8 @@ pub struct Params {
     pub sftp: bool,
     /// Offer a local SOCKS5 proxy through the server instead of a shell (SSH profiles only).
     pub proxy: bool,
+    /// Refuse a host key that isn't pinned yet instead of asking about it: for a connection nobody is watching.
+    pub pinned_hosts_only: bool,
 }
 
 pub fn start(

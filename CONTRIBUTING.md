@@ -35,7 +35,7 @@ docs/           guides, and one file per change in docs/changes/
 | Agent access: the question, access, activity and connect dialogs, and the settings block (`agent-ui.ts`); their wording and tests (`agent-core.ts`) | `agent-ui.ts`, `agent-core.ts` |
 | Building blocks: DOM helper and modal, context menu, command palette | `ui.ts`, `menu.ts`, `palette.ts` |
 | Palette Toolbox: the tool list and dialog (`toolbox.ts`), their logic and tests (`toolbox-core.ts`) | `toolbox.ts`, `toolbox-core.ts` |
-| Palette server tools: commands run on the connected host. Running them and telling Windows from the rest (`server-run.ts`); facts, processes and disk use (`server-tools.ts`, readers in `server-tools-core.ts`); services, containers and logs (`server-operate.ts`, scripts and readers in `server-services-core.ts`); putting a vault key's public half on a host (`server-keys-core.ts`) | `server-run.ts`, `server-tools.ts`, `server-operate.ts` and the three `-core.ts` files |
+| Palette server tools: commands run on the connected host. Running them and telling Windows from the rest (`server-run.ts`); facts, processes and disk use (`server-tools.ts`, readers in `server-tools-core.ts`); services, containers and logs (`server-operate.ts`, scripts and readers in `server-services-core.ts`); putting a vault key's public half on a host (`server-keys-core.ts`), and setting up key sign-in from start to finish (`key-setup-core.ts`) | `server-run.ts`, `server-tools.ts`, `server-operate.ts` and the four `-core.ts` files |
 | Looks: interface colours, terminal themes, emblem | `chrome.ts`, `themes.ts`, `emblem.ts` |
 | Sidebar and palette helpers | `sidebar-layout.ts` (width and collapse), `proto-icon.ts` (the icons), `quick-connect.ts` (reading an address typed into the palette), `saved-commands.ts` (a profile's commands and their `{{values}}`) |
 | Everything else | `help.ts` (shortcut panel), `shell-integration.ts`, `window-controls.ts`, and `assets/` (bundled fonts and images) |
@@ -47,7 +47,7 @@ docs/           guides, and one file per change in docs/changes/
 |---|---|
 | `main.rs`, `lib.rs` | Start-up, and the Tauri commands the interface can call |
 | `session.rs` | Running sessions and the frames they stream to the interface |
-| `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells (and one-off commands beside them), jump hosts, port forwards, the local SOCKS proxy, SFTP |
+| `ssh.rs`, `tunnel.rs`, `sftp.rs` | SSH shells (and one-off commands beside them, and `check_key`, a key-only sign-in that tests whether a server accepts a key), jump hosts, port forwards, the local SOCKS proxy, SFTP |
 | `telnet.rs`, `serial.rs` | The other two network and serial terminal protocols |
 | `local.rs` | Shells on this computer (cmd, PowerShell, WSL, Linux shells) run on a pseudo-terminal |
 | `toolbox.rs` | The Toolbox's network checks: name lookup, port check, TCP ping, Wake-on-LAN |
