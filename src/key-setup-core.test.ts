@@ -29,6 +29,7 @@ describe("choosing the key", () => {
     expect(chooseKey([], "", "  core-switch  ")).toEqual({ make: "core-switch" });
     expect(chooseKey([], "", "x".repeat(100))).toEqual({ make: "x".repeat(64) });
     expect(chooseKey([], "", "   ")).toEqual({ make: "server key" });
+    expect(chooseKey([], "", "web\n01\t")).toEqual({ make: "web 01" }); // a profile name may hold what a key name may not
   });
 
   it("uses a key the vault has when a name is typed", () => {

@@ -42,7 +42,7 @@ export function installCommand(key: string, name: string): string {
   const script = [
     "umask 077",
     'mkdir -p "$HOME/.ssh" && cd "$HOME/.ssh" && touch authorized_keys && chmod 700 . && chmod 600 authorized_keys || exit 1',
-    `grep -qF -- ${shq(key)} authorized_keys && { echo 'That key is already in ~/.ssh/authorized_keys'; exit 0; }`,
+    `grep -v '^[[:space:]]*#' authorized_keys | grep -qF -- ${shq(key)} && { echo 'That key is already in ~/.ssh/authorized_keys'; exit 0; }`,
     '[ -z "$(tail -c1 authorized_keys)" ] || echo >> authorized_keys',
     `printf '%s\\n' ${shq(line)} >> authorized_keys && echo 'Key added to ~/.ssh/authorized_keys'`,
   ].join("; ");
@@ -51,7 +51,7 @@ export function installCommand(key: string, name: string): string {
 
 /**
  * Adds the key to `~/.ssh/authorized_keys` unless it is already there, creating the folder (mode 700) and the file
- * (mode 600) if needed, and keeping any other line as it is. It decides "already there" by the key itself, not its comment.
+ * (mode 600) if needed, and keeping any other line as it is. It decides "already there" by the key itself, not its comment, and ignores commented-out lines.
  */
 export function installKeyUnix(key: string, name: string): string {
   if (!PUBLIC_KEY.test(key)) throw new Error("That isn't a public key Portique can put on a server");
@@ -64,7 +64,7 @@ LINE=${shq(line)}
 d="$HOME/.ssh"; f="$d/authorized_keys"
 mkdir -p "$d" && chmod 700 "$d" && touch "$f" && chmod 600 "$f" || { echo '@@err'; echo "Couldn't prepare $f"; exit 0; }
 echo '@@file'; echo "$f"
-if grep -qF -- "$KEY" "$f"; then
+if grep -v '^[[:space:]]*#' "$f" | grep -qF -- "$KEY"; then
   echo '@@result'; echo already
 else
   if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then echo >> "$f"; fi

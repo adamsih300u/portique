@@ -85,6 +85,7 @@ function installKeyTool(host: Host): Tool {
  */
 function keySignInTool(host: Host): Tool {
   let keys: KeyInfo[] = [];
+  let running = false; // one run at a time: two would race to make the same key
   let moot: string | null = null; // set once the profile is known to use a key already
   const choice = (text: string) => {
     if (moot) throw new Error(moot);
@@ -112,6 +113,8 @@ function keySignInTool(host: Host): Tool {
     run: async (text) => {
       const chosen = choice(text);
       if (known(host) === "windows") return noWindows("Setting up key sign-in");
+      if (running) return fail("Setting up key sign-in is already running. Wait for it to finish.");
+      running = true;
       return setUpKeySignIn({
         makeKey: async (name) => {
           const made = await api.generateKey(name);
@@ -129,7 +132,7 @@ function keySignInTool(host: Host): Tool {
           host.profileChanged();
           return "switched";
         },
-      }, chosen, host.name);
+      }, chosen, host.name).finally(() => (running = false));
     },
   };
 }

@@ -87,6 +87,14 @@ describe("the key script", () => {
       expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`${PUB} adam@elsewhere\n`);
     });
 
+    it("adds the key when the file only has it commented out", () => {
+      const h = home();
+      mkdirSync(join(h, ".ssh"));
+      writeFileSync(join(h, ".ssh/authorized_keys"), `# ${PUB} old\n  #${PUB}\n`);
+      expect(formatInstallKey(run(installKeyUnix(PUB, "laptop"), h), "laptop")).toContain("Added");
+      expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`# ${PUB} old\n  #${PUB}\n${PUB} portique:laptop\n`);
+    });
+
     it("explains an account with no home folder or a folder it can't write", () => {
       expect(() => formatInstallKey(execFileSync("/bin/sh", [], { input: installKeyUnix(PUB, "k"), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin" } }), "k")).toThrow("no home folder");
       const h = home();
@@ -146,6 +154,14 @@ describe("the public key to hand to another server", () => {
       writeFileSync(join(h, ".ssh/authorized_keys"), `${PUB} adam@elsewhere\n`);
       expect(sh(installCommand(PUB, "laptop"), h)).toContain("already in");
       expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`${PUB} adam@elsewhere\n`);
+    });
+
+    it("adds the key when the file only has it commented out", () => {
+      const h = home();
+      mkdirSync(join(h, ".ssh"));
+      writeFileSync(join(h, ".ssh/authorized_keys"), `# ${PUB} old\n`);
+      expect(sh(installCommand(PUB, "laptop"), h)).toContain("Key added");
+      expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`# ${PUB} old\n${PUB} portique:laptop\n`);
     });
 
     it("never lets the key's name become code, and works pasted into a shell that is not sh", () => {

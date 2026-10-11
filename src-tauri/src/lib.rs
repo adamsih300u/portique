@@ -305,7 +305,7 @@ fn key_public(id: String) -> Res<keys::PublicKey> {
 
 #[tauri::command]
 fn import_key(name: String, pem: Zeroizing<String>, passphrase: Option<Zeroizing<String>>) -> Res<keys::KeyInfo> {
-    keys::import(&name, &pem, passphrase.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())).map_err(err)
+    keys::import_checked(&name, &pem, passphrase.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())).map_err(err)
 }
 
 /// Does this profile's server accept this vault key? Signs in with the key alone and disconnects. It sends nothing

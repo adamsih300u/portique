@@ -1,6 +1,6 @@
 # Set up key sign-in to a server in one step
 
-- **Branch:** `feat/key-sign-in-setup` (stacked on `feat/generate-keys`)
+- **Branch:** `feat/key-sign-in` (off `dev`, after `feat/generate-keys` merged)
 - **PR:** not opened yet
 - **Status:** draft
 - **Author:** Claude (agent)
@@ -21,6 +21,7 @@ Records that constrain it: [ADR-0003](../adr/0003-secrets-never-read-back.md) (t
 - **`key-setup-core.ts` (new, tested):** `chooseKey`, `planSetup` and `setUpKeySignIn`, which runs the steps in order with what they need passed in. A failure reports what was already done and what to do next.
 - **`server-operate.ts`:** the tool. It explains and stops when the profile already signs in with a key (`alreadyKeyed`), and both key tools' palette hints now say how they differ: *Install a key* only adds a key and changes nothing else; *Set up key sign-in* also checks it and switches the profile. **`server-run.ts`:** `Host` gains `profile` (the saved profile's id) and `profileChanged()`; **`main.ts`** passes them, and the profile list reloads when a tool changes a profile. **`toolbox.ts`:** an action tool may set `blank`, so an empty box means "the usual case" and shows its plan.
 - **`server-keys-core.ts`:** `readInstallKey` returns what the script reported; `formatInstallKey` is built on it and says what it said before.
+- **Review fixes:** `keys.rs` holds one lock across every change to the key list (`import`, `generate`, `delete`), so two at once can't each write a stale list; the window's import now refuses a name already in use, as generating does, because the palette picks keys by name; a key whose list entry can't be written no longer leaves its secret in the vault. The install script and the paste command ignore commented-out lines when deciding a key is "already there". A profile name with control characters is cleaned before it names a key, and a second run of the tool while one is going is refused.
 - **Docs:** `command-palette.md`, `using-portique.md`, `CONTRIBUTING.md`.
 
 ## How to review
@@ -39,6 +40,8 @@ Against a real `sshd` (a throwaway one on loopback, `XDG_CONFIG_HOME` pointed at
 
 In headless Chromium against a mocked backend, through the real palette and a mocked connected session: the plan for an empty box, a successful run (the profile saved with `authMethod: "key"` and the new key's id; the check called once with the profile and key; the script sent holds the key's public line and the `portique:` comment), and a rejected key (the profile not saved, the error listing what was done).
 
+A separate read-only review of the whole diff looked for private-key exposure, shell quoting, host-key handling, step order and XSS, and found nothing serious. Its low findings are fixed above or listed below.
+
 **Not run:** the real `check_key_login` and `generate_key` commands from the window (the sshd tests call the Rust functions directly; the page used mocks); a server with a password only (the test server accepts keys only, so the starting credential was a key); a jump host in the check; a passphrase-protected key; a server where sshd accepts the key but refuses the account for another reason; Windows servers (refused with a message); a light interface look.
 
 ## Not done / follow-ups
@@ -47,6 +50,8 @@ In headless Chromium against a mocked backend, through the real palette and a mo
 - It sets the profile to *Private key*. A profile that was *Private key + password* ends up key-only; the password stays saved.
 - Removing the saved password once the key works, in the same step. Left to the person, since a password is the only way back in if the key is later deleted.
 - Removing a key from a server.
+- The check re-reads the saved profile by id, so if its host or user was edited after the terminal connected, the key goes to one server and the check tries another. That fails safe (a false failure, or a pass on a server that already accepts the key). Passing the session's own host and user to the check would close it.
+- The profile switch saves a copy of the profile read moments earlier, so an edit saved from the editor in that window would be overwritten. A backend command that sets only the sign-in would remove it.
 - The two tools overlap when an existing key is typed in (see D5).
 - The dialog keeps its *Set up* button after a run; pressing it again with an empty box reports that the key's name is taken and tells the person to type it.
 

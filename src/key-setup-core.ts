@@ -11,7 +11,7 @@ export type Choice = { use: KeyInfo } | { make: string };
 /** Blank input makes a new key named after the profile; anything else names a key the vault already has. */
 export function chooseKey(keys: KeyInfo[], input: string, profileName: string): Choice {
   if (input.trim()) return { use: pickKey(keys, input) };
-  const name = profileName.trim().slice(0, 64) || "server key";
+  const name = [...profileName].map((c) => (c < " " || c === "\u007f" ? " " : c)).join("").trim().slice(0, 64) || "server key";
   if (keys.some((k) => k.name.toLowerCase() === name.toLowerCase())) {
     throw new Error(`The vault already has a key called "${name}". Type its name to use it, or rename that key first.`);
   }
