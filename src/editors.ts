@@ -3,6 +3,8 @@ import { type SavedCommand, sanitizeCommands } from "./saved-commands";
 import { apiConnectionForm } from "./api-connection";
 import { allThemes, DEFAULT_FONT, effectiveFont, getTheme, isBuiltin, loadThemes } from "./themes";
 
+import { copyInstallCommand, copyPublicKey, keyProblem, publicKeyDialog, savePublicKey } from "./key-public";
+import { contextMenu } from "./menu";
 import { field, h, modal } from "./ui";
 
 const FONTS = [
@@ -317,11 +319,27 @@ export async function editProfile(existing: Profile | null, protocol?: Protocol,
 /** Key import/delete dialog. Resolves with the refreshed key list. */
 export async function manageKeysDialog(): Promise<KeyInfo[]> {
   const list = h("div", { class: "key-list" });
+  const attempt = async (what: () => Promise<unknown>) => {
+    try {
+      await what();
+    } catch (e) {
+      alert(keyProblem(e));
+    }
+  };
+  const keyMenu = (e: MouseEvent, k: KeyInfo) => {
+    e.preventDefault();
+    contextMenu(e.clientX, e.clientY, [
+      { label: "Show public key…", action: () => void attempt(() => publicKeyDialog(k)) },
+      { label: "Copy public key", action: () => void attempt(() => copyPublicKey(k)) },
+      { label: "Copy install command", action: () => void attempt(() => copyInstallCommand(k)) },
+      { label: "Save public key…", action: () => void attempt(() => savePublicKey(k)) },
+    ]);
+  };
   const render = async () => {
     const keys = await api.listKeys();
     list.replaceChildren(
       ...(keys.length ? keys : []).map((k) =>
-        h("div", { class: "key-row" },
+        h("div", { class: "key-row", oncontextmenu: (e: MouseEvent) => keyMenu(e, k) },
           h("div", {}, h("strong", {}, k.name), h("small", {}, ` ${k.algorithm}${k.encrypted ? " · passphrase-protected" : ""}`),
             h("div", { class: "mono small" }, k.fingerprint)),
           h("button", { onclick: async () => {
@@ -331,11 +349,23 @@ export async function manageKeysDialog(): Promise<KeyInfo[]> {
             }
           } }, "Delete")),
       ),
-      ...(keys.length ? [] : [h("p", { class: "muted" }, "No keys imported yet.")]),
+      ...(keys.length ? [h("p", { class: "muted" }, "Right-click a key to copy or save its public half, or to copy a command that installs it on a server.")] : [h("p", { class: "muted" }, "No keys yet. Generate one below, or import one you already have.")]),
     );
     return keys;
   };
   await render();
+
+  const gname = h("input", { placeholder: "Name for the new key, e.g. work-laptop" });
+  const generate = h("button", { class: "primary", onclick: async () => {
+    try {
+      const k = await api.generateKey(gname.value);
+      gname.value = "";
+      await render();
+      await publicKeyDialog(k);
+    } catch (e) {
+      alert(keyProblem(e));
+    }
+  } }, "Generate key");
 
   const kname = h("input", { placeholder: "Key name, e.g. work-laptop" });
   const file = h("input", { type: "file" });
@@ -359,7 +389,9 @@ export async function manageKeysDialog(): Promise<KeyInfo[]> {
     }
   } }, "Import key");
 
-  const body = h("div", {}, list, h("h3", {}, "Import a private key"), kname, file, pem, pp, importBtn,
+  const body = h("div", {}, list, h("h3", {}, "Generate a new key"), gname, generate,
+    h("p", { class: "muted" }, "Makes an Ed25519 key inside the vault. The private half never leaves it; Portique signs in with it for you, and you share only the public half."),
+    h("h3", {}, "Import a private key"), kname, file, pem, pp, importBtn,
     h("p", { class: "muted" }, "Keys and passphrases are stored inside the encrypted vault (vault.bin), never as plain files."));
   await modal("SSH keys", body, [{ label: "Close", primary: true }], true);
   return api.listKeys();

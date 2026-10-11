@@ -31,6 +31,7 @@ docs/           guides, and one file per change in docs/changes/
 | SFTP file browser tab | `file-tab.ts` |
 | API client | `api-tab.ts` (the tab), `http-request.ts` (one request), `api-connection.ts` (connection form), `http-model.ts` (types, address and header rules, curl), `http-checks.ts`, `http-import.ts`, `http-transfer.ts`, `http-store.ts`, `http-env.ts`, `http-proxy.ts` |
 | Dialogs: profile editor, keys, themes, settings, vault | `editors.ts`, `settings-ui.ts`, `vault-ui.ts`, `host-prompts.ts` |
+| Handing out a key's public half: show, copy, save, install command | `key-public.ts` (the command and file name are built in `server-keys-core.ts`) |
 | Agent access: the question, access, activity and connect dialogs, and the settings block (`agent-ui.ts`); their wording and tests (`agent-core.ts`) | `agent-ui.ts`, `agent-core.ts` |
 | Building blocks: DOM helper and modal, context menu, command palette | `ui.ts`, `menu.ts`, `palette.ts` |
 | Palette Toolbox: the tool list and dialog (`toolbox.ts`), their logic and tests (`toolbox-core.ts`) | `toolbox.ts`, `toolbox-core.ts` |
@@ -53,7 +54,7 @@ docs/           guides, and one file per change in docs/changes/
 | `http.rs` | The API client's HTTP engine: variables, OAuth, proxy |
 | `agent/` | The MCP server that lets agents use terminals: `mod.rs` (policy, registry, activity log), `ops.rs` (the operations behind each tool), `mcp.rs` (JSON-RPC and the tool list), `server.rs` (loopback HTTP, token and origin checks), `shim.rs` (`portique mcp`, the stdio bridge), `session.rs`, `transcript.rs` (history, screen, text cleaning), `exec.rs` (command markers and keys), `approval.rs` |
 | `store.rs` | Profiles, themes and the config folder |
-| `vault.rs`, `keys.rs` | The encrypted vault and imported SSH keys (`keys::public` gives out only a key's public half) |
+| `vault.rs`, `keys.rs` | The encrypted vault and SSH keys, imported or generated (`keys::generate` makes an Ed25519 key that never leaves Rust; `keys::public` gives out only a key's public half) |
 | `window.rs` | Settings, drop-down mode, opening links |
 
 ### How the two halves talk

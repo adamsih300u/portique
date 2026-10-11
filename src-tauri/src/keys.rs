@@ -3,7 +3,11 @@
 
 use crate::{store, vault};
 use anyhow::{bail, Context, Result};
-use russh::keys::{decode_secret_key, ssh_key::HashAlg, PrivateKey};
+use russh::keys::{
+    decode_secret_key,
+    ssh_key::{private::Ed25519Keypair, HashAlg, LineEnding},
+    PrivateKey,
+};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -74,6 +78,36 @@ pub fn import(name: &str, pem: &str, passphrase: Option<&str>) -> Result<KeyInfo
     Ok(info)
 }
 
+/// A name for a new key: trimmed, and not in use (case aside), because the palette picks keys by name.
+fn new_name(name: &str, existing: &[KeyInfo]) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        bail!("give the key a name");
+    }
+    if name.chars().count() > 64 || name.chars().any(char::is_control) {
+        bail!("a key name is at most 64 characters, with no control characters");
+    }
+    if existing.iter().any(|k| k.name.to_lowercase() == name.to_lowercase()) {
+        bail!("there is already a key called \"{name}\"; choose another name");
+    }
+    Ok(name.to_string())
+}
+
+fn fresh_key() -> Result<PrivateKey> {
+    let mut seed = Zeroizing::new([0u8; 32]);
+    getrandom::fill(&mut seed[..]).map_err(|e| anyhow::anyhow!("no randomness available: {e}"))?;
+    Ok(PrivateKey::from(Ed25519Keypair::from_seed(&seed)))
+}
+
+/// Makes a new Ed25519 key and keeps it in the vault, like an imported one. The private key is never returned or
+/// shown: the caller gets its name, fingerprint and id, and asks for the public half separately. It has no passphrase
+/// of its own, since the vault already encrypts it and would hold the passphrase beside it.
+pub fn generate(name: &str) -> Result<KeyInfo> {
+    let name = new_name(name, &list()?)?;
+    let pem = fresh_key()?.to_openssh(LineEnding::LF).context("cannot write the new key")?;
+    import(&name, &pem, None)
+}
+
 pub fn delete(id: &str) -> Result<()> {
     valid_id(id)?;
     {
@@ -127,6 +161,37 @@ mod tests {
         assert_eq!(fields[0], "ssh-ed25519");
         assert!(fields[1].starts_with("AAAAC3NzaC1lZDI1NTE5AAAAI"));
         assert!(p.fingerprint.starts_with("SHA256:"));
+    }
+
+    fn info(name: &str) -> KeyInfo {
+        KeyInfo { id: "x".into(), name: name.into(), algorithm: "ssh-ed25519".into(), fingerprint: "SHA256:x".into(), encrypted: false }
+    }
+
+    #[test]
+    fn a_new_key_name_is_trimmed_and_must_be_free() {
+        assert_eq!(new_name("  work laptop ", &[]).unwrap(), "work laptop");
+        assert!(new_name("   ", &[]).is_err());
+        assert!(new_name("a\nb", &[]).is_err());
+        assert!(new_name(&"x".repeat(65), &[]).is_err());
+        let err = new_name("Work", &[info("work")]).unwrap_err().to_string();
+        assert!(err.contains("already a key called"), "{err}");
+        assert!(new_name("home", &[info("work")]).is_ok());
+    }
+
+    #[test]
+    fn fresh_keys_are_ed25519_and_never_repeat() {
+        let (a, b) = (fresh_key().unwrap(), fresh_key().unwrap());
+        assert_eq!(a.algorithm().to_string(), "ssh-ed25519");
+        assert_ne!(public_of(&a).unwrap(), public_of(&b).unwrap());
+    }
+
+    #[test]
+    fn a_new_key_survives_the_openssh_round_trip_it_is_stored_in() {
+        let k = fresh_key().unwrap();
+        let pem = k.to_openssh(LineEnding::LF).unwrap();
+        assert!(pem.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"));
+        let back = decode_secret_key(&pem, None).unwrap();
+        assert_eq!(public_of(&k).unwrap(), public_of(&back).unwrap());
     }
 
     #[test]
