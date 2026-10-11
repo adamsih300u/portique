@@ -40,6 +40,8 @@ struct Handler {
     sid: String,
     rejection: Arc<Mutex<Option<String>>>,
     remote: RemoteMap,
+    /// Rejects a host key that isn't pinned yet, with no question asked.
+    pinned_only: bool,
 }
 
 impl Handler {
@@ -97,6 +99,9 @@ impl client::Handler for Handler {
             }
         };
 
+        if self.pinned_only {
+            return self.reject(format!("{} hasn't been connected to and trusted yet, so its host key can't be checked here.", self.host_id));
+        }
         let answer = self.sessions.ask_host(&self.sid);
         self.em.status_json(
             "confirm-host",
@@ -139,6 +144,7 @@ fn dial<'a>(
             sid: params.sid.clone(),
             rejection: rejection.clone(),
             remote: remote.clone(),
+            pinned_only: params.pinned_hosts_only,
         };
         let config = Arc::new(client::Config {
             // A silent link is declared dead after ~45 s so the UI can reconnect.
@@ -355,6 +361,35 @@ pub async fn run_proxy(p: &Profile, params: Params, em: Emitter, mut rx: Unbound
         let _ = hop.disconnect(Disconnect::ByApplication, "", "en").await;
     }
     res
+}
+
+/// How long a key check may take, counting the connection and every jump host before it.
+const CHECK_SECS: u64 = 30;
+
+/// Signs in to `p`'s server with `key_id` alone (never the profile's password), then disconnects: does the server
+/// accept this key? Nobody is watching, so a host key that isn't pinned yet is refused rather than asked about.
+/// Jump hosts sign in with their own saved credentials, as they do for a session.
+pub async fn check_key(p: &Profile, key_id: &str) -> Result<()> {
+    let mut p = p.clone();
+    p.auth_method = AuthMethod::Key;
+    p.key_id = Some(key_id.to_string());
+    let params = Params { sid: "key-check".into(), sessions: Sessions::default(), pinned_hosts_only: true, ..Default::default() };
+    let attempt = async {
+        let (em, remote, mut hops) = (Emitter::sink(|_| {}), RemoteMap::default(), Vec::new());
+        let mut session = dial(&p, &params, &em, &remote, &mut hops, &mut vec![p.id.clone()]).await?;
+        let result = match key_auth(&mut session, &p, &params).await {
+            Ok(r) if r.success() => Ok(()),
+            Ok(_) => Err(anyhow!("the server did not accept the key")),
+            Err(e) if e.is::<NeedsInput>() => Err(anyhow!("this key is protected by a passphrase the vault doesn't have; save the passphrase with the key first")),
+            Err(e) => Err(e),
+        };
+        let _ = session.disconnect(Disconnect::ByApplication, "", "en").await;
+        for hop in hops.iter().rev() {
+            let _ = hop.disconnect(Disconnect::ByApplication, "", "en").await;
+        }
+        result
+    };
+    tokio::time::timeout(Duration::from_secs(CHECK_SECS), attempt).await.map_err(|_| anyhow!("the server did not answer within {CHECK_SECS} seconds"))?
 }
 
 async fn authenticate(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<()> {
@@ -611,6 +646,104 @@ mod tests {
         assert!(err.is::<ConnectionLost>(), "got: {err:#}");
         assert!(states.lock().unwrap().contains(&"connected".to_string()));
         keys::delete(&key.id).unwrap();
+    }
+
+    /// Key sign-in from start to finish, as the palette tool does it. Needs a running sshd that reads authorized keys from
+    /// `$PORTIQUE_TEST_FAKE_HOME/.ssh/authorized_keys`, with the key in PORTIQUE_TEST_SSH_KEY authorized there to begin with,
+    /// plus PORTIQUE_TEST_SSH_PORT and PORTIQUE_TEST_SSH_USER. PORTIQUE_TEST_INSTALL_SCRIPT is the interface's own install
+    /// script, made for the public key `PLACEHOLDER_KEY` below; the test swaps in the new key's real data and runs it
+    /// over an open session. Then it checks the key, the way the profile switch is gated.
+    #[tokio::test]
+    #[ignore]
+    async fn key_sign_in_from_start_to_finish_against_local_sshd() {
+        const PLACEHOLDER_KEY: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIPLACEHOLDERPLACEHOLDERPLACEHOLDERPLACEHOLDER00";
+        let env = |k: &str| std::env::var(k).unwrap();
+        let (home, template) = (env("PORTIQUE_TEST_FAKE_HOME"), std::fs::read_to_string(env("PORTIQUE_TEST_INSTALL_SCRIPT")).unwrap());
+        assert!(template.contains(PLACEHOLDER_KEY));
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let boot = keys::import("bootstrap", &std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap(), None).unwrap();
+        let base = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"), ..Default::default()
+        };
+
+        // The person is connected already, with whatever they had before: here a bootstrap key.
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "e2e".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move { for _ in 0..50 { tokio::time::sleep(Duration::from_millis(100)).await; sessions.answer_host("e2e", true); } });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let open = Profile { auth_method: AuthMethod::Key, key_id: Some(boot.id.clone()), ..base.clone() };
+        let task = tokio::spawn({ let em = Emitter::new(Channel::new(|_| Ok(()))); async move { run(&open, params, em, rx).await } });
+        for _ in 0..50 {
+            if EXEC.lock().unwrap().contains_key("e2e") { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Step 1 and 2: a new key, and its public half on the server by the interface's own script.
+        let info = keys::generate("e2e-key").unwrap();
+        let public = keys::public(&info.id).unwrap();
+        let data = public.key.split(' ').nth(1).unwrap();
+        let script = template.replace(PLACEHOLDER_KEY, data);
+        let command = format!("env HOME={home} sh");
+        let r = exec("e2e", &command, Some(&script), 30).await.unwrap();
+        assert!(r.stdout.contains("@@result\nadded\n"), "stdout: {} stderr: {}", r.stdout, r.stderr);
+        let file = std::fs::read_to_string(format!("{home}/.ssh/authorized_keys")).unwrap();
+        assert!(file.contains(&format!("{} portique:e2e-key", public.key)), "file: {file}");
+        assert!(file.lines().count() >= 2, "the key that was there must still be there: {file}");
+
+        // Step 3: the check signs in with the new key alone. The profile's own method is a password that isn't saved.
+        let p = Profile { auth_method: AuthMethod::Password, ..base.clone() };
+        check_key(&p, &info.id).await.expect("the new key must sign in");
+        assert!(check_key(&p, &boot.id).await.is_ok(), "the bootstrap key is still accepted too");
+
+        // Running it again changes nothing.
+        let again = exec("e2e", &command, Some(&script), 30).await.unwrap();
+        assert!(again.stdout.contains("@@result\nalready\n"), "stdout: {}", again.stdout);
+        assert_eq!(std::fs::read_to_string(format!("{home}/.ssh/authorized_keys")).unwrap(), file);
+
+        tx.send(Ctl::Close).unwrap();
+        task.await.unwrap().unwrap();
+        keys::delete(&info.id).unwrap();
+        keys::delete(&boot.id).unwrap();
+    }
+
+    /// Same setup as above. Checks a key against a server before and after the server is told about it.
+    #[tokio::test]
+    #[ignore]
+    async fn check_key_tells_a_key_the_server_accepts_from_one_it_does_not() {
+        let env = |k: &str| std::env::var(k).unwrap();
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let info = keys::generate("checked").unwrap();
+        std::fs::write(env("PORTIQUE_TEST_SSH_AUTHORIZED"), "").unwrap();
+        let p = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
+            auth_method: AuthMethod::Password, ..Default::default()
+        };
+
+        // Nobody has trusted this server yet, and a check has nobody to ask: it refuses at once.
+        let err = check_key(&p, &info.id).await.unwrap_err();
+        assert!(err.to_string().contains("trusted yet"), "got: {err:#}");
+
+        // Connecting once and accepting the host key pins it (the key itself is not authorized, so sign-in fails).
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "t".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move { for _ in 0..30 { tokio::time::sleep(Duration::from_millis(100)).await; sessions.answer_host("t", true); } });
+        let pk = Profile { auth_method: AuthMethod::Key, key_id: Some(info.id.clone()), ..p.clone() };
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        run(&pk, params, Emitter::new(Channel::new(|_| Ok(()))), rx).await.unwrap_err();
+
+        // The profile's own method is password, with none saved; the check must use the key alone and say it was refused.
+        let err = check_key(&p, &info.id).await.unwrap_err();
+        assert!(err.to_string().contains("did not accept the key"), "got: {err:#}");
+
+        let public = keys::public(&info.id).unwrap();
+        std::fs::write(env("PORTIQUE_TEST_SSH_AUTHORIZED"), format!("{} portique:checked\n", public.key)).unwrap();
+        check_key(&p, &info.id).await.expect("the server has the key now");
+
+        assert!(check_key(&p, "no-such-key").await.is_err());
+        let wrong = keys::generate("other").unwrap();
+        assert!(check_key(&p, &wrong.id).await.is_err(), "a key the server doesn't have must not pass");
+        keys::delete(&info.id).unwrap();
+        keys::delete(&wrong.id).unwrap();
     }
 
     /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER and PORTIQUE_TEST_SSH_AUTHORIZED, the

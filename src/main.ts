@@ -639,7 +639,7 @@ function paletteItems(): PaletteItem[] {
     // Tools that run on this host: one row to browse them, every tool when typing. They use the open connection.
     if (term.session && term.profile.protocol === "ssh") {
       add("Server", "server-tools", "Server tools…", () => showPalette("commands", "Server "), { only: "browse", subtitle: `facts, services, containers and logs on ${term.profile.name}`, keywords: "host machine" });
-      for (const t of serverTools({ name: term.profile.name, session: () => term.session, type: (text, run) => term.typeCommand(text, run) }))
+      for (const t of serverTools({ name: term.profile.name, profile: term.profile.id, profileChanged: () => void refresh(), session: () => term.session, type: (text, run) => term.typeCommand(text, run) }))
         add("Server", `server:${term.profile.id}:${t.id}`, t.title, () => void openTool(t), { only: "search", subtitle: t.hint, keywords: t.keywords });
     }
     if (tab.focused.profile.protocol === "ssh") add("This tab", "files-here", "Open file browser for this host", () => openFiles(tab.focused.profile), { keywords: "sftp" });

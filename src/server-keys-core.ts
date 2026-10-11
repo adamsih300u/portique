@@ -79,15 +79,25 @@ export function planInstallKey(k: KeyInfo): string {
   return `Will add the public key of "${k.name}" (${k.algorithm}, ${k.fingerprint}) to ~/.ssh/authorized_keys on the server, unless it is already there.\n\nIt creates ~/.ssh and the file if they are missing and sets them to mode 700 and 600, appends one line, and changes nothing else. Only the public half is sent; the private key stays in the vault.`;
 }
 
-export function formatInstallKey(text: string, name: string): string {
+/** What the install script reported: which file, whether the key was added or was there already, and how many lines it holds now. */
+export interface Installed {
+  file: string;
+  result: "added" | "already";
+  count: number;
+}
+
+/** Reads the script's output. Throws, with the server's own words, when the key didn't get there. */
+export function readInstallKey(text: string): Installed {
   const s = sections(text);
   if (s.err?.length) throw new Error(s.err.join("\n"));
   const file = s.file?.[0] ?? "~/.ssh/authorized_keys";
   const result = s.result?.[0];
-  const count = Number(s.count?.[0]);
+  if (result !== "added" && result !== "already") throw new Error(`Couldn't add the key to ${file}.\n${clean(text).trim().slice(0, 300)}`);
+  return { file, result, count: Number(s.count?.[0]) };
+}
+
+export function formatInstallKey(text: string, name: string): string {
+  const { file, result, count } = readInstallKey(text);
   if (result === "already") return `"${name}" is already in ${file}. Nothing changed.`;
-  if (result === "added") {
-    return `Added "${name}" to ${file}${count > 0 ? ` (${count} key${count === 1 ? "" : "s"} there now)` : ""}.\n\nNext: edit this profile, set the sign-in to a key, and choose "${name}". Keep the saved password until you have tried it.`;
-  }
-  throw new Error(`Couldn't add the key to ${file}.\n${clean(text).trim().slice(0, 300)}`);
+  return `Added "${name}" to ${file}${count > 0 ? ` (${count} key${count === 1 ? "" : "s"} there now)` : ""}.\n\nNext: edit this profile, set the sign-in to a key, and choose "${name}". Keep the saved password until you have tried it.`;
 }
