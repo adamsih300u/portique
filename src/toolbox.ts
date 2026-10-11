@@ -18,7 +18,7 @@ export interface Tool {
   input?: { label: string; hint?: string; multiline?: boolean };
   /** Works out the answer as you type (the tool is quick and does not touch the network). */
   live?: boolean;
-  /** Has an answer for empty input (a default length, the current time). Otherwise an empty box shows nothing. */
+  /** Has an answer for empty input (a default length, the current time, a plan for the usual case). Otherwise an empty box shows nothing. */
   blank?: boolean;
   /** Clears the clipboard 30 seconds after copying. */
   secret?: boolean;
@@ -195,7 +195,7 @@ export async function openTool(tool: Tool) {
     result = null;
     status.textContent = "";
     const text = input?.value ?? "";
-    if (!text.trim()) return show(act!.idle?.() ?? ""), false;
+    if (!text.trim() && !tool.blank) return show(act!.idle?.() ?? ""), false;
     try {
       show(act!.plan(text));
       return true;

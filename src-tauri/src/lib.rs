@@ -305,7 +305,18 @@ fn key_public(id: String) -> Res<keys::PublicKey> {
 
 #[tauri::command]
 fn import_key(name: String, pem: Zeroizing<String>, passphrase: Option<Zeroizing<String>>) -> Res<keys::KeyInfo> {
-    keys::import(&name, &pem, passphrase.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())).map_err(err)
+    keys::import_checked(&name, &pem, passphrase.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())).map_err(err)
+}
+
+/// Does this profile's server accept this vault key? Signs in with the key alone and disconnects. It sends nothing
+/// but the key's signature, and returns nothing but yes or why not.
+#[tauri::command]
+async fn check_key_login(profile_id: String, key_id: String) -> Res<()> {
+    let p = store::get_profile(&profile_id).map_err(err)?;
+    if p.protocol != store::Protocol::Ssh {
+        return Err("only SSH profiles sign in with a key".into());
+    }
+    ssh::check_key(&p, &key_id).await.map_err(err)
 }
 
 /// Makes a new key in the vault. Only its name and fingerprint come back; the private key stays in Rust.
@@ -847,6 +858,7 @@ pub fn run() {
             import_key,
             key_public,
             generate_key,
+            check_key_login,
             delete_key,
             forget_host,
             list_serial_ports,

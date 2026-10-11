@@ -42,7 +42,7 @@ export function installCommand(key: string, name: string): string {
   const script = [
     "umask 077",
     'mkdir -p "$HOME/.ssh" && cd "$HOME/.ssh" && touch authorized_keys && chmod 700 . && chmod 600 authorized_keys || exit 1',
-    `grep -qF -- ${shq(key)} authorized_keys && { echo 'That key is already in ~/.ssh/authorized_keys'; exit 0; }`,
+    `grep -v '^[[:space:]]*#' authorized_keys | grep -qF -- ${shq(key)} && { echo 'That key is already in ~/.ssh/authorized_keys'; exit 0; }`,
     '[ -z "$(tail -c1 authorized_keys)" ] || echo >> authorized_keys',
     `printf '%s\\n' ${shq(line)} >> authorized_keys && echo 'Key added to ~/.ssh/authorized_keys'`,
   ].join("; ");
@@ -51,7 +51,7 @@ export function installCommand(key: string, name: string): string {
 
 /**
  * Adds the key to `~/.ssh/authorized_keys` unless it is already there, creating the folder (mode 700) and the file
- * (mode 600) if needed, and keeping any other line as it is. It decides "already there" by the key itself, not its comment.
+ * (mode 600) if needed, and keeping any other line as it is. It decides "already there" by the key itself, not its comment, and ignores commented-out lines.
  */
 export function installKeyUnix(key: string, name: string): string {
   if (!PUBLIC_KEY.test(key)) throw new Error("That isn't a public key Portique can put on a server");
@@ -64,7 +64,7 @@ LINE=${shq(line)}
 d="$HOME/.ssh"; f="$d/authorized_keys"
 mkdir -p "$d" && chmod 700 "$d" && touch "$f" && chmod 600 "$f" || { echo '@@err'; echo "Couldn't prepare $f"; exit 0; }
 echo '@@file'; echo "$f"
-if grep -qF -- "$KEY" "$f"; then
+if grep -v '^[[:space:]]*#' "$f" | grep -qF -- "$KEY"; then
   echo '@@result'; echo already
 else
   if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then echo >> "$f"; fi
@@ -79,15 +79,25 @@ export function planInstallKey(k: KeyInfo): string {
   return `Will add the public key of "${k.name}" (${k.algorithm}, ${k.fingerprint}) to ~/.ssh/authorized_keys on the server, unless it is already there.\n\nIt creates ~/.ssh and the file if they are missing and sets them to mode 700 and 600, appends one line, and changes nothing else. Only the public half is sent; the private key stays in the vault.`;
 }
 
-export function formatInstallKey(text: string, name: string): string {
+/** What the install script reported: which file, whether the key was added or was there already, and how many lines it holds now. */
+export interface Installed {
+  file: string;
+  result: "added" | "already";
+  count: number;
+}
+
+/** Reads the script's output. Throws, with the server's own words, when the key didn't get there. */
+export function readInstallKey(text: string): Installed {
   const s = sections(text);
   if (s.err?.length) throw new Error(s.err.join("\n"));
   const file = s.file?.[0] ?? "~/.ssh/authorized_keys";
   const result = s.result?.[0];
-  const count = Number(s.count?.[0]);
+  if (result !== "added" && result !== "already") throw new Error(`Couldn't add the key to ${file}.\n${clean(text).trim().slice(0, 300)}`);
+  return { file, result, count: Number(s.count?.[0]) };
+}
+
+export function formatInstallKey(text: string, name: string): string {
+  const { file, result, count } = readInstallKey(text);
   if (result === "already") return `"${name}" is already in ${file}. Nothing changed.`;
-  if (result === "added") {
-    return `Added "${name}" to ${file}${count > 0 ? ` (${count} key${count === 1 ? "" : "s"} there now)` : ""}.\n\nNext: edit this profile, set the sign-in to a key, and choose "${name}". Keep the saved password until you have tried it.`;
-  }
-  throw new Error(`Couldn't add the key to ${file}.\n${clean(text).trim().slice(0, 300)}`);
+  return `Added "${name}" to ${file}${count > 0 ? ` (${count} key${count === 1 ? "" : "s"} there now)` : ""}.\n\nNext: edit this profile, set the sign-in to a key, and choose "${name}". Keep the saved password until you have tried it.`;
 }

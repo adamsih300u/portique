@@ -1,5 +1,6 @@
 import { api, type KeyInfo } from "./api";
-import { formatInstallKey, installKeyUnix, pickKey, planInstallKey } from "./server-keys-core";
+import { alreadyKeyed, chooseKey, planSetup, setUpKeySignIn } from "./key-setup-core";
+import { formatInstallKey, installKeyUnix, pickKey, planInstallKey, readInstallKey } from "./server-keys-core";
 import { fail, known, onServer, prepare, type Host } from "./server-run";
 import {
   CONTAINERS_UNIX, SERVICES_UNIX, SERVICES_WINDOWS, containerActionUnix, containerLogUnix, containerName, containerPlanUnix, followCommand, formatContainerAction,
@@ -59,7 +60,7 @@ function containerTool(host: Host, verb: CtrVerb): Tool {
 function installKeyTool(host: Host): Tool {
   let keys: KeyInfo[] = [];
   return {
-    id: "install-key", heading: `Install a key: ${host.name}`, title: "Install a key on this host…", hint: "let a vault key sign in to this server", keywords: "server host authorized_keys public key login passwordless sign in",
+    id: "install-key", heading: `Install a key: ${host.name}`, title: "Install a key on this host…", hint: "add a key to this server, and change nothing else", keywords: "server host authorized_keys public key login passwordless sign in",
     input: { label: "Key", hint: "the name of a key under SSH keys… in the vault" },
     prepare: async () => {
       await prepare(host)();
@@ -74,6 +75,64 @@ function installKeyTool(host: Host): Tool {
       const k = pickKey(keys, text);
       const pub = await api.keyPublic(k.id); // only the public half; the private key never leaves Rust
       return onServer(host, 30, (os) => (os === "windows" ? noWindows("Installing a key") : { script: installKeyUnix(pub.key, k.name), read: (t) => formatInstallKey(t, k.name) }));
+    },
+  };
+}
+
+/**
+ * Key sign-in from start to finish on the open connection: a key from the vault (or a new one), its public half on the
+ * server, a sign-in with the key alone to prove the server accepts it, and only then the profile switched to the key.
+ */
+function keySignInTool(host: Host): Tool {
+  let keys: KeyInfo[] = [];
+  let running = false; // one run at a time: two would race to make the same key
+  let moot: string | null = null; // set once the profile is known to use a key already
+  const choice = (text: string) => {
+    if (moot) throw new Error(moot);
+    return chooseKey(keys, text, host.name);
+  };
+  return {
+    id: "key-sign-in", heading: `Set up key sign-in: ${host.name}`, title: "Set up key sign-in…", hint: "move this profile from a password to a key: make or pick one, install it, check it, switch",
+    keywords: "server host ssh key generate keygen new authorized_keys public key login passwordless password sign in setup",
+    input: { label: "Key", hint: "leave empty to make a new key named after this profile, or type the name of a key in the vault" },
+    blank: true,
+    prepare: async () => {
+      await prepare(host)();
+      keys = await api.listKeys();
+      const p = (await api.listProfiles()).find((x) => x.id === host.profile);
+      moot = p ? alreadyKeyed(p.authMethod, p.keyId, keys) : null;
+    },
+    action: {
+      label: "Set up",
+      plan: (text) => {
+        if (known(host) === "windows") return noWindows("Setting up key sign-in");
+        const plan = planSetup(choice(text), host.name);
+        return text.trim() || !keys.length ? plan : `${plan}\n\nTo use a key you already have, type its name:\n${keys.map((k) => `  ${k.name}  (${k.algorithm}, ${k.fingerprint})`).join("\n")}`;
+      },
+    },
+    run: async (text) => {
+      const chosen = choice(text);
+      if (known(host) === "windows") return noWindows("Setting up key sign-in");
+      if (running) return fail("Setting up key sign-in is already running. Wait for it to finish.");
+      running = true;
+      return setUpKeySignIn({
+        makeKey: async (name) => {
+          const made = await api.generateKey(name);
+          keys = await api.listKeys();
+          return made;
+        },
+        publicKey: async (id) => (await api.keyPublic(id)).key, // only the public half; the private key never leaves Rust
+        install: (pub, name) => onServer(host, 30, () => ({ script: installKeyUnix(pub, name), read: readInstallKey })),
+        check: (keyId) => api.checkKeyLogin(host.profile, keyId),
+        switchProfile: async (keyId) => {
+          const p = (await api.listProfiles()).find((x) => x.id === host.profile);
+          if (!p) return "unsaved";
+          if (p.authMethod === "key" && p.keyId === keyId) return "already";
+          await api.saveProfile({ ...p, authMethod: "key", keyId });
+          host.profileChanged();
+          return "switched";
+        },
+      }, chosen, host.name).finally(() => (running = false));
     },
   };
 }
@@ -114,6 +173,7 @@ export function operateTools(host: Host): Tool[] {
       run: () => onServer(host, 45, (os) => (os === "windows" ? noWindows("Containers") : { script: CONTAINERS_UNIX, read: (t) => formatContainers(t, host.name) })),
     },
     ...(["restart", "stop", "start"] as const).map((v) => containerTool(host, v)),
+    keySignInTool(host),
     installKeyTool(host),
     {
       id: "container-log", heading: heading("Container log"), title: "Container log…", hint: "the last 200 lines a container printed", keywords: "server host docker podman logs output errors",

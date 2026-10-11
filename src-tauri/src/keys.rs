@@ -9,7 +9,15 @@ use russh::keys::{
     PrivateKey,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::{Mutex, MutexGuard};
 use zeroize::Zeroizing;
+
+/// Held across every change to the key list, so two at once can't both read the old list and each write theirs.
+static CHANGING: Mutex<()> = Mutex::new(());
+
+fn changing() -> MutexGuard<'static, ()> {
+    CHANGING.lock().unwrap_or_else(|p| p.into_inner())
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -47,7 +55,22 @@ pub fn needs_passphrase(id: &str) -> Result<bool> {
     Ok(list()?.iter().any(|k| k.id == id && k.encrypted) && !v.contains(&vault::passphrase_account(id))?)
 }
 
+/// Imports a key under any name, even one in use: the integration tests' way in. The window uses `import_checked`.
+#[cfg(test)]
 pub fn import(name: &str, pem: &str, passphrase: Option<&str>) -> Result<KeyInfo> {
+    let _g = changing();
+    store_key(name, pem, passphrase)
+}
+
+/// Imports a key under a name that is free (see `new_name`), which is what the window's import does.
+pub fn import_checked(name: &str, pem: &str, passphrase: Option<&str>) -> Result<KeyInfo> {
+    let _g = changing();
+    let name = new_name(name, &list()?)?;
+    store_key(&name, pem, passphrase)
+}
+
+/// Does the work of an import. The caller holds `changing()`.
+fn store_key(name: &str, pem: &str, passphrase: Option<&str>) -> Result<KeyInfo> {
     let pem = Zeroizing::new(pem.trim().replace("\r\n", "\n") + "\n");
     let encrypted = decode_secret_key(&pem, None).is_err();
     let key = decode_secret_key(&pem, passphrase).map_err(|e| {
@@ -72,9 +95,17 @@ pub fn import(name: &str, pem: &str, passphrase: Option<&str>) -> Result<KeyInfo
         fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
         encrypted,
     };
-    let mut all = list()?;
-    all.push(info.clone());
-    store::write_json("keys.json", &all)?;
+    let saved = list().and_then(|mut all| {
+        all.push(info.clone());
+        store::write_json("keys.json", &all)
+    });
+    if let Err(e) = saved {
+        // No entry for the key means nothing could ever use or delete it: don't leave its secret in the vault.
+        let mut v = vault::global();
+        let _ = v.delete(&vault::key_account(&info.id));
+        let _ = v.delete(&vault::passphrase_account(&info.id));
+        return Err(e);
+    }
     Ok(info)
 }
 
@@ -103,13 +134,15 @@ fn fresh_key() -> Result<PrivateKey> {
 /// shown: the caller gets its name, fingerprint and id, and asks for the public half separately. It has no passphrase
 /// of its own, since the vault already encrypts it and would hold the passphrase beside it.
 pub fn generate(name: &str) -> Result<KeyInfo> {
+    let _g = changing();
     let name = new_name(name, &list()?)?;
     let pem = fresh_key()?.to_openssh(LineEnding::LF).context("cannot write the new key")?;
-    import(&name, &pem, None)
+    store_key(&name, &pem, None)
 }
 
 pub fn delete(id: &str) -> Result<()> {
     valid_id(id)?;
+    let _g = changing();
     {
         let mut v = vault::global();
         v.delete(&vault::key_account(id))?;
