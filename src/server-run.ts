@@ -6,6 +6,10 @@ import { clean, osFromUname, powershell, windowsFromVer, type Os } from "./serve
 /** The server of one open SSH terminal. `session` is its current session id, or null once it has gone. */
 export interface Host {
   name: string;
+  /** The saved profile this terminal connected with. */
+  profile: string;
+  /** Tells the app a tool changed that profile, so its list and editor don't show the old settings. */
+  profileChanged(): void;
   session(): string | null;
   /** Types text into the host's terminal for the person to see; `run` also presses Enter. */
   type(text: string, run: boolean): void;

@@ -383,6 +383,8 @@ export const api = {
     guarded(() => invoke<KeyInfo>("import_key", { name, pem, passphrase: passphrase || null })),
   /** Makes a new Ed25519 key in the vault; the private key never reaches the page. */
   generateKey: (name: string) => guarded(() => invoke<KeyInfo>("generate_key", { name })),
+  /** Signs in to the profile's server with this key alone and disconnects: does the server accept it? Rejects with why not. */
+  checkKeyLogin: (profileId: string, keyId: string) => guarded(() => invoke<void>("check_key_login", { profileId, keyId })),
   deleteKey: (id: string) => guarded(() => invoke<void>("delete_key", { id })),
   forgetHost: (host: string, port: number) => invoke<void>("forget_host", { host, port }),
   listSerialPorts: () => invoke<PortInfo[]>("list_serial_ports"),
