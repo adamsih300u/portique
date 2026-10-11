@@ -7,7 +7,7 @@ import { clean, sections, shq } from "./server-tools-core";
 /** The key in the vault the person means: by its name, or the start or a part of it when that is unambiguous. */
 export function pickKey(keys: KeyInfo[], text: string): KeyInfo {
   const t = text.trim().toLowerCase();
-  if (!keys.length) throw new Error("The vault has no keys yet. Import one under SSH keys… first.");
+  if (!keys.length) throw new Error("The vault has no keys yet. Generate or import one under SSH keys… first.");
   const names = keys.map((k) => k.name).join(", ");
   if (!t) throw new Error(`Enter the name of a key. In the vault: ${names}`);
   const exact = keys.filter((k) => k.name.toLowerCase() === t);
@@ -20,6 +20,34 @@ export function pickKey(keys: KeyInfo[], text: string): KeyInfo {
 export const keyComment = (name: string) => `portique:${name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "key"}`;
 
 const PUBLIC_KEY = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,3}$/;
+
+const publicOnly = (key: string) => {
+  if (!PUBLIC_KEY.test(key)) throw new Error("That isn't a public key Portique can put on a server");
+  return key;
+};
+
+/** The public key as one line for an `authorized_keys` file or a `.pub` file, with Portique's comment. */
+export const publicLine = (key: string, name: string) => `${publicOnly(key)} ${keyComment(name)}`;
+
+/** A file name for the saved public key: the key's name made safe, ending in `.pub`. */
+export const publicFileName = (name: string) => `${keyComment(name).slice("portique:".length).replace(/^[.-]+/, "") || "key"}.pub`;
+
+/**
+ * One command to paste on a server Portique is not connected to: it adds the key to `~/.ssh/authorized_keys` the same way
+ * the install tool does (folder 700, file 600, nothing added twice, other lines kept). It runs under `sh` whatever shell
+ * the account uses, and the key is checked first, so what is pasted holds nothing but the public line.
+ */
+export function installCommand(key: string, name: string): string {
+  const line = publicLine(key, name);
+  const script = [
+    "umask 077",
+    'mkdir -p "$HOME/.ssh" && cd "$HOME/.ssh" && touch authorized_keys && chmod 700 . && chmod 600 authorized_keys || exit 1',
+    `grep -qF -- ${shq(key)} authorized_keys && { echo 'That key is already in ~/.ssh/authorized_keys'; exit 0; }`,
+    '[ -z "$(tail -c1 authorized_keys)" ] || echo >> authorized_keys',
+    `printf '%s\\n' ${shq(line)} >> authorized_keys && echo 'Key added to ~/.ssh/authorized_keys'`,
+  ].join("; ");
+  return `sh -c ${shq(script)}`;
+}
 
 /**
  * Adds the key to `~/.ssh/authorized_keys` unless it is already there, creating the folder (mode 700) and the file

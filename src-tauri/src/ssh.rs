@@ -613,6 +613,42 @@ mod tests {
         keys::delete(&key.id).unwrap();
     }
 
+    /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER and PORTIQUE_TEST_SSH_AUTHORIZED, the
+    /// file that sshd reads as its `AuthorizedKeysFile`. Point XDG_CONFIG_HOME and XDG_DATA_HOME at a scratch folder.
+    /// Makes a key in the vault, authorizes only its public half, and signs in with it.
+    #[tokio::test]
+    #[ignore]
+    async fn a_generated_key_signs_in_to_local_sshd() {
+        let env = |k: &str| std::env::var(k).unwrap();
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let info = keys::generate("generated").unwrap();
+        assert!(keys::generate("GENERATED").is_err(), "a second key may not reuse a name");
+        let public = keys::public(&info.id).unwrap();
+        std::fs::write(env("PORTIQUE_TEST_SSH_AUTHORIZED"), format!("{} portique:generated\n", public.key)).unwrap();
+
+        let p = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
+            auth_method: AuthMethod::Key, key_id: Some(info.id.clone()), ..Default::default()
+        };
+        let out = Arc::new(StdMutex::new(Vec::<u8>::new()));
+        let sink = out.clone();
+        let em = Emitter::new(Channel::new(move |b: InvokeResponseBody| {
+            if let InvokeResponseBody::Raw(v) = b { if v[0] == 0 { sink.lock().unwrap().extend_from_slice(&v[1..]); } }
+            Ok(())
+        }));
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "t".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move { for _ in 0..50 { tokio::time::sleep(Duration::from_millis(100)).await; sessions.answer_host("t", true); } });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move { run(&p, params, em, rx).await });
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        tx.send(Ctl::Input(b"echo generated-$((6*7))\nexit\n".to_vec())).unwrap();
+        task.await.unwrap().unwrap();
+        let text = String::from_utf8_lossy(&out.lock().unwrap()).to_string();
+        assert!(text.contains("generated-42"), "output was: {text}");
+        keys::delete(&info.id).unwrap();
+    }
+
     /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER, PORTIQUE_TEST_SSH_KEY.
     #[tokio::test]
     #[ignore]

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { KeyInfo } from "./api";
-import { formatInstallKey, installKeyUnix, keyComment, pickKey, planInstallKey } from "./server-keys-core";
+import { formatInstallKey, installCommand, installKeyUnix, keyComment, pickKey, planInstallKey, publicFileName, publicLine } from "./server-keys-core";
 
 const key = (name: string, id = name): KeyInfo => ({ id, name, algorithm: "ssh-ed25519", fingerprint: `SHA256:fp-${name}`, encrypted: false });
 const KEYS = [key("laptop"), key("work laptop"), key("deploy")];
@@ -105,5 +105,63 @@ describe("the key script", () => {
 
   it("reads a failed write", () => {
     expect(() => formatInstallKey("@@file\n/h/.ssh/authorized_keys\n@@result\nfailed\n", "k")).toThrow("Couldn't add the key");
+  });
+});
+
+describe("the public key to hand to another server", () => {
+  const home = () => mkdtempSync(join(tmpdir(), "portique-home-"));
+  const sh = (command: string, h: string) => execFileSync("/bin/sh", ["-c", command], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin", HOME: h } });
+  const mode = (p: string) => (statSync(p).mode & 0o777).toString(8);
+
+  it("is one line with Portique's comment, and a .pub file name made from the key's name", () => {
+    expect(publicLine(PUB, "work laptop")).toBe(`${PUB} portique:work-laptop`);
+    expect(publicFileName("work laptop")).toBe("work-laptop.pub");
+    expect(publicFileName("../../etc/passwd")).toBe("etc-passwd.pub");
+    expect(publicFileName("***")).toBe("key.pub");
+  });
+
+  it("refuses anything that isn't a public key, so no private key can reach a clipboard or a file by this route", () => {
+    for (const bad of ["", "-----BEGIN OPENSSH PRIVATE KEY-----", "ssh-ed25519 AAAA; rm -rf /", `${PUB} extra`])
+      for (const make of [publicLine, installCommand]) expect(() => make(bad, "k"), bad).toThrow("isn't a public key");
+  });
+
+  describe.skipIf(process.platform === "win32")("the command to paste, run by sh with a temporary home folder", () => {
+    it("creates the folder and file with tight modes, adds the key once and says so", () => {
+      const h = home();
+      const cmd = installCommand(PUB, "work laptop");
+      expect(sh(cmd, h)).toContain("Key added");
+      expect(mode(join(h, ".ssh"))).toBe("700");
+      expect(mode(join(h, ".ssh/authorized_keys"))).toBe("600");
+      expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`${PUB} portique:work-laptop\n`);
+      expect(sh(cmd, h)).toContain("already in");
+      expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`${PUB} portique:work-laptop\n`);
+    });
+
+    it("keeps other lines, a file with no final newline included, and spots the key under another comment", () => {
+      const h = home();
+      mkdirSync(join(h, ".ssh"), { mode: 0o755 });
+      writeFileSync(join(h, ".ssh/authorized_keys"), "ssh-rsa OTHERKEY mine@host\n# note\nssh-ed25519 ANOTHER noeol", { mode: 0o644 });
+      sh(installCommand(PUB, "laptop"), h);
+      expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`ssh-rsa OTHERKEY mine@host\n# note\nssh-ed25519 ANOTHER noeol\n${PUB} portique:laptop\n`);
+      writeFileSync(join(h, ".ssh/authorized_keys"), `${PUB} adam@elsewhere\n`);
+      expect(sh(installCommand(PUB, "laptop"), h)).toContain("already in");
+      expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`${PUB} adam@elsewhere\n`);
+    });
+
+    it("never lets the key's name become code, and works pasted into a shell that is not sh", () => {
+      const h = home();
+      sh(installCommand(PUB, "x'; touch pwned; '"), h);
+      expect(existsSync(join(h, "pwned"))).toBe(false);
+      expect(readFileSync(join(h, ".ssh/authorized_keys"), "utf8")).toBe(`${PUB} portique:x-touch-pwned\n`);
+      // It is a single `sh -c '…'` word, so what the account's own shell makes of the rest does not matter.
+      expect(installCommand(PUB, "k")).toMatch(/^sh -c '/);
+    });
+
+    it("stops, and says nothing was added, when the folder can't be prepared", () => {
+      const h = home();
+      writeFileSync(join(h, ".ssh"), "a file where the folder should be");
+      expect(() => sh(installCommand(PUB, "k"), h)).toThrow();
+      expect(existsSync(join(h, ".ssh/authorized_keys"))).toBe(false);
+    });
   });
 });

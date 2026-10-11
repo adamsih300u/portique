@@ -67,7 +67,7 @@ function installKeyTool(host: Host): Tool {
     },
     action: {
       label: "Install",
-      idle: () => (keys.length ? `Keys in the vault:\n${keys.map((k) => `  ${k.name}  (${k.algorithm}, ${k.fingerprint})`).join("\n")}` : "The vault has no keys yet. Import one under SSH keys… first."),
+      idle: () => (keys.length ? `Keys in the vault:\n${keys.map((k) => `  ${k.name}  (${k.algorithm}, ${k.fingerprint})`).join("\n")}` : "The vault has no keys yet. Generate or import one under SSH keys… first."),
       plan: (text) => (known(host) === "windows" ? noWindows("Installing a key") : planInstallKey(pickKey(keys, text))),
     },
     run: async (text) => {

@@ -381,6 +381,8 @@ export const api = {
   keyPublic: (id: string) => guarded(() => invoke<PublicKeyInfo>("key_public", { id })),
   importKey: (name: string, pem: string, passphrase?: string) =>
     guarded(() => invoke<KeyInfo>("import_key", { name, pem, passphrase: passphrase || null })),
+  /** Makes a new Ed25519 key in the vault; the private key never reaches the page. */
+  generateKey: (name: string) => guarded(() => invoke<KeyInfo>("generate_key", { name })),
   deleteKey: (id: string) => guarded(() => invoke<void>("delete_key", { id })),
   forgetHost: (host: string, port: number) => invoke<void>("forget_host", { host, port }),
   listSerialPorts: () => invoke<PortInfo[]>("list_serial_ports"),

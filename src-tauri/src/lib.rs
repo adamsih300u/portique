@@ -308,6 +308,12 @@ fn import_key(name: String, pem: Zeroizing<String>, passphrase: Option<Zeroizing
     keys::import(&name, &pem, passphrase.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())).map_err(err)
 }
 
+/// Makes a new key in the vault. Only its name and fingerprint come back; the private key stays in Rust.
+#[tauri::command]
+fn generate_key(name: String) -> Res<keys::KeyInfo> {
+    keys::generate(&name).map_err(err)
+}
+
 #[tauri::command]
 fn delete_key(id: String) -> Res<()> {
     keys::delete(&id).map_err(err)
@@ -840,6 +846,7 @@ pub fn run() {
             list_keys,
             import_key,
             key_public,
+            generate_key,
             delete_key,
             forget_host,
             list_serial_ports,
