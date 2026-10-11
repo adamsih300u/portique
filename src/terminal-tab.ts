@@ -622,7 +622,7 @@ export class TerminalTab {
 
   private fail(msg: string) {
     // While reconnecting, a failed attempt (network still down) just waits longer.
-    if (this.auto && !PERMANENT.test(msg)) {
+    if (this.auto && !PERMANENT.test(msg.split("\n")[0])) { // only the headline: the advice below it may use any words
       this.term.write(`\r\x1b[2K\x1b[2m[${msg.split("\n")[0]}]\x1b[0m`);
       return this.scheduleReconnect("Still unreachable");
     }

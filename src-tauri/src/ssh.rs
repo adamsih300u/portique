@@ -782,6 +782,40 @@ mod tests {
         keys::delete(&info.id).unwrap();
     }
 
+    /// Needs a running sshd that does not have the key in PORTIQUE_TEST_SSH_KEY: set PORTIQUE_TEST_SSH_PORT,
+    /// PORTIQUE_TEST_SSH_USER and PORTIQUE_TEST_SSH_KEY. Feeds `explain::friendly` the errors a closed port and a rejected
+    /// key really produce, so its wording is checked against what russh says and not what we guess it says.
+    #[tokio::test]
+    #[ignore]
+    async fn real_failures_read_plainly() {
+        let env = |k: &str| std::env::var(k).unwrap();
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let info = keys::import("unauthorized", &std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap(), None).unwrap();
+        let attempt = |p: Profile| async move {
+            let sessions = Sessions::default();
+            let params = Params { cols: 80, rows: 24, sid: "t".into(), sessions: sessions.clone(), ..Default::default() };
+            tokio::spawn(async move { for _ in 0..30 { tokio::time::sleep(Duration::from_millis(100)).await; sessions.answer_host("t", true); } });
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let err = run(&p, params, Emitter::new(Channel::new(|_| Ok(()))), rx).await.unwrap_err();
+            crate::explain::friendly(&err, &p)
+        };
+
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port(); // free, so nothing listens
+        let refused = attempt(Profile { host: "127.0.0.1".into(), port: closed, username: "x".into(), ..Default::default() }).await;
+        assert!(refused.starts_with(&format!("127.0.0.1:{closed} refused the connection.")), "got: {refused}");
+        assert!(refused.contains("Details:"), "the original error stays underneath: {refused}");
+
+        let rejected = attempt(Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
+            auth_method: AuthMethod::Key, key_id: Some(info.id.clone()), ..Default::default()
+        }).await;
+        assert!(rejected.starts_with("Authentication failed: the server rejected the key"), "got: {rejected}");
+
+        let unresolved = attempt(Profile { host: "no-such-host.invalid".into(), port: 22, username: "x".into(), ..Default::default() }).await;
+        assert!(unresolved.starts_with("The name no-such-host.invalid could not be resolved."), "got: {unresolved}");
+        keys::delete(&info.id).unwrap();
+    }
+
     /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER, PORTIQUE_TEST_SSH_KEY.
     #[tokio::test]
     #[ignore]

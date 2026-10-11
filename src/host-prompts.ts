@@ -14,14 +14,16 @@ export interface HostKeyInfo {
 /** Asks whether to trust an unknown host key, and tells the backend the answer. */
 export async function confirmHostKey(i: HostKeyInfo) {
   const body = h("div", {},
-    h("p", {}, `The authenticity of ${i.host} can't be established. Verify this fingerprint against the server (for example with ssh-keygen -lf on the host) before accepting.`),
-    h("p", {}, h("strong", {}, i.algorithm)),
+    i.knownOtherType
+      ? h("p", { class: "warn" }, `Portique already knows a different kind of key for ${i.host}. That can happen when a server is reinstalled or reconfigured, but it can also mean someone is intercepting the connection. Check with whoever runs the server before you accept.`)
+      : h("p", {}, `This is the first time Portique connects to ${i.host}. Every server identifies itself with a key. Portique remembers it from now on and warns you if it ever changes.`),
+    h("p", {}, h("strong", {}, i.algorithm), " fingerprint (SHA-256):"),
     h("p", { class: "mono" }, i.fingerprint),
-    i.knownOtherType ? h("p", { class: "warn" }, "Warning: Portique already knows a different key type for this host. This can be a legitimate reconfiguration, or an attack.") : null);
+    h("p", { class: "muted" }, "If you can, compare it with the server's own: run ssh-keygen -lf on its host key file (for example /etc/ssh/ssh_host_ed25519_key.pub). If you trust the network you are on, accepting is normal."));
   let accept = false;
-  await modal("Unknown host key", body, [
-    { label: "Reject" },
-    { label: "Accept and remember", primary: true, action: () => { accept = true; } },
+  await modal("New server", body, [
+    { label: "Cancel" },
+    { label: "Trust and connect", primary: true, action: () => { accept = true; } },
   ], false, false);
   await api.confirmHost(i.sid, accept);
 }

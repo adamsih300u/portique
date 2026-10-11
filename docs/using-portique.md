@@ -23,6 +23,10 @@ Right-click a profile to act on it. An SSH, Telnet or Serial profile offers **Co
 - **Saved commands** keep commands for the host in the palette. See [the palette page](command-palette.md#saved-commands).
 - **File browser (SFTP)** in the editor sets where the file browser starts, on this computer and on the server. A blank folder on this computer uses the default from *Settings…*; a blank one on the server means the account's login folder.
 
+### When a connection fails
+
+The tab says why in plain words (name not found, connection refused, no answer, wrong password or key, serial port not allowed), what to try, and keeps the technical error underneath. The first time you connect to a server, Portique explains that being asked to trust its key is normal and how to check the fingerprint.
+
 ### Connection health
 
 SSH sends a keepalive every 15 seconds and treats about 45 seconds of silence as a dropped link. While Portique reconnects on its own, the tab's dot pulses amber. It waits 1, 2, 4, 8, 15 and then 30 seconds between up to ten tries; press **Enter** to retry now or **Esc** to stop. It stops by itself on login problems and never prompts for a password unattended. A reconnect is a new login, so the old shell and anything running in it are gone. Use tmux or screen to keep work alive.
