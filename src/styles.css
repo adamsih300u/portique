@@ -101,6 +101,8 @@ main { background: var(--bg); color: var(--text); display: flex; flex-direction:
 .side-head button.icon { flex: none; width: 34px; padding: 5px 0; }
 .profile.ctx { background: var(--panel2); outline: 1px solid var(--accent); outline-offset: -1px; }
 .empty .hints { font-size: var(--fs-xs); opacity: .7; }
+.empty .version { position: absolute; left: 0; right: 0; bottom: 14px; margin: 0; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; letter-spacing: .04em; opacity: .5; user-select: text; }
+.empty .version[hidden] { display: none; }
 /* ---- tabs, panes ---- */
 .tbadge { display: flex; gap: 6px; font-size: var(--fs-xs); color: var(--muted); } .tbadge:empty { display: none; }
 .tabview { position: absolute; inset: 0; display: flex; }

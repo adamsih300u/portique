@@ -25,6 +25,7 @@ import { isQuick, parseQuickTarget, type QuickTarget, quickLabel, quickProfileFo
 import { h, promptText } from "./ui";
 import { windowControls } from "./window-controls";
 import { changePasswordDialog, ensureUnlocked, lockNow, onVaultCreated, unlockIfExists } from "./vault-ui";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { initSidebar } from "./sidebar-layout";
 
@@ -54,6 +55,9 @@ const sidebar = h("div", { class: "profiles" });
 const search = h("input", { class: "search", placeholder: "Search profiles…", oninput: () => renderProfiles() });
 const tabBar = h("div", { class: "tabbar" }, ...windowControls());
 const stage = h("div", { class: "stage" });
+/** The running build's version as the release is named on GitHub (v0.5.0, or v0.5.1-dev.42 for a dev build). It stays hidden until known. */
+const appVersion = h("p", { class: "version", hidden: true });
+getVersion().then((v) => { appVersion.textContent = `v${v}`; appVersion.hidden = false; }, () => {});
 const empty = h("div", { class: "empty" },
   emblem("emblem"),
   h("h1", {}, "Portique"),
@@ -61,7 +65,8 @@ const empty = h("div", { class: "empty" },
   h("div", { class: "filet" }, "◆"),
   h("p", {}, "Double-click a profile to connect, or create one with “+ New”."),
   h("p", {}, "Choose the API protocol under “+ New” to work with a web endpoint."),
-  h("p", { class: "hints" }, "Right-click a profile for more · Ctrl+Shift+D / E split a tab · Ctrl+click opens links"));
+  h("p", { class: "hints" }, "Right-click a profile for more · Ctrl+Shift+D / E split a tab · Ctrl+click opens links"),
+  appVersion);
 
 const GEAR = '<circle cx="8" cy="8" r="2.3"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3"/>';
 const gearIcon = () => {
