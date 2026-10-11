@@ -19,7 +19,7 @@ Records that constrain it: [ADR-0003](../adr/0003-secrets-never-read-back.md) (t
 
 - **`ssh.rs`:** `check_key(profile, key_id)` opens a connection the way a session does (jump hosts included), signs in with that key and nothing else, and disconnects. It runs with `pinned_hosts_only` (new on `Params`): nobody is watching, so a host key that isn't pinned is refused instead of asked about, and a changed key is refused as always. 30 seconds in all. `check_key_login` in `lib.rs` and `checkKeyLogin` in `api.ts` expose it; it returns nothing but success or the reason.
 - **`key-setup-core.ts` (new, tested):** `chooseKey`, `planSetup` and `setUpKeySignIn`, which runs the steps in order with what they need passed in. A failure reports what was already done and what to do next.
-- **`server-operate.ts`:** the tool. **`server-run.ts`:** `Host` gains `profile` (the saved profile's id) and `profileChanged()`; **`main.ts`** passes them, and the profile list reloads when a tool changes a profile. **`toolbox.ts`:** an action tool may set `blank`, so an empty box means "the usual case" and shows its plan.
+- **`server-operate.ts`:** the tool. It explains and stops when the profile already signs in with a key (`alreadyKeyed`), and both key tools' palette hints now say how they differ: *Install a key* only adds a key and changes nothing else; *Set up key sign-in* also checks it and switches the profile. **`server-run.ts`:** `Host` gains `profile` (the saved profile's id) and `profileChanged()`; **`main.ts`** passes them, and the profile list reloads when a tool changes a profile. **`toolbox.ts`:** an action tool may set `blank`, so an empty box means "the usual case" and shows its plan.
 - **`server-keys-core.ts`:** `readInstallKey` returns what the script reported; `formatInstallKey` is built on it and says what it said before.
 - **Docs:** `command-palette.md`, `using-portique.md`, `CONTRIBUTING.md`.
 
@@ -47,6 +47,7 @@ In headless Chromium against a mocked backend, through the real palette and a mo
 - It sets the profile to *Private key*. A profile that was *Private key + password* ends up key-only; the password stays saved.
 - Removing the saved password once the key works, in the same step. Left to the person, since a password is the only way back in if the key is later deleted.
 - Removing a key from a server.
+- The two tools overlap when an existing key is typed in (see D5).
 - The dialog keeps its *Set up* button after a run; pressing it again with an empty box reports that the key's name is taken and tells the person to type it.
 
 ## Decisions
@@ -82,3 +83,11 @@ In headless Chromium against a mocked backend, through the real palette and a mo
 - **Decision:** The tool leaves it in the vault and says so.
 - **Consequences:** If the key is later deleted or the server's file is cleaned, the person can switch back by editing the profile. The cost is a secret that stays until they remove it.
 - **Alternatives considered:** Deleting it on success (removes the only way back, on the person's behalf, in a tool whose plan doesn't offer that).
+
+### D5. Keep *Install a key* beside *Set up key sign-in*, and stop the second when it has nothing to do
+
+- **Status:** accepted
+- **Context:** Both tools put a key on the server with the same script. *Install a key* is already in `dev`; *Set up key sign-in* does the same install, then a check and a profile switch. A profile that already signs in with a key has nothing to switch.
+- **Decision:** Keep both. *Install a key* is the small step (add a key, change nothing else), and *Set up key sign-in* is the guided move off a password. Their palette hints say so. When the profile's sign-in is already *Private key*, *Set up key sign-in* says there is nothing to set up and names *Install a key on this host…* for adding another key. A profile that uses a key together with a password is not stopped, since moving it to a key alone is a real change.
+- **Consequences:** No duplicated install code (both call `installKeyUnix`), and a server already set up for keys isn't offered the heavier flow. Two rows still exist for one underlying action.
+- **Alternatives considered:** Folding install into the new tool (it changes a command already in `dev`, and the switch would need an opt-out). Hiding the new tool for a key profile (a palette row that comes and goes is harder to find than one that explains itself).

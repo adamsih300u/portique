@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KeyInfo } from "./api";
-import { chooseKey, planSetup, setUpKeySignIn, type Steps } from "./key-setup-core";
+import { alreadyKeyed, chooseKey, planSetup, setUpKeySignIn, type Steps } from "./key-setup-core";
 
 const key = (name: string): KeyInfo => ({ id: `id-${name}`, name, algorithm: "ssh-ed25519", fingerprint: `SHA256:fp-${name}`, encrypted: false });
 const PUB = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPortiqueTestKeyDataOnlyNotARealKeyAAAAAAAAAAAAAAAAAA";
@@ -123,5 +123,19 @@ describe("setting it up", () => {
     expect(out).not.toContain("saved password is still");
     const already = fake({}, { switchProfile: () => Promise.resolve("already" as const) });
     expect(await setUpKeySignIn(already.steps, { use: key("laptop") }, "p")).toContain('"p" already signs in with this key.');
+  });
+});
+
+describe("a profile that already uses a key", () => {
+  it("has nothing to set up, and points to the tool that only adds a key", () => {
+    const msg = alreadyKeyed("key", "id-laptop", [key("laptop")]);
+    expect(msg).toContain('already signs in with the key "laptop"');
+    expect(msg).toContain("Install a key on this host");
+    expect(alreadyKeyed("key", "gone", [])).toContain("signs in with a key,");
+  });
+
+  it("is not stopped by a password, or by a key used together with one", () => {
+    expect(alreadyKeyed("password", null, [])).toBeNull();
+    expect(alreadyKeyed("keyAndPassword", "id-laptop", [key("laptop")])).toBeNull();
   });
 });

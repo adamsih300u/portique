@@ -18,6 +18,13 @@ export function chooseKey(keys: KeyInfo[], input: string, profileName: string): 
   return { make: name };
 }
 
+/** Why there is nothing to set up, when the profile already signs in with a key from the vault; otherwise null. */
+export function alreadyKeyed(authMethod: string, keyId: string | null, keys: KeyInfo[]): string | null {
+  if (authMethod !== "key") return null;
+  const k = keys.find((x) => x.id === keyId);
+  return `This profile already signs in with ${k ? `the key "${k.name}"` : "a key"}, so there is nothing to set up. To let another key in, use "Install a key on this host…".`;
+}
+
 /** What will happen, in order, before the person presses the button. */
 export function planSetup(c: Choice, profileName: string): string {
   const first = "use" in c

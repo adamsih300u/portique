@@ -1,5 +1,5 @@
 import { api, type KeyInfo } from "./api";
-import { chooseKey, planSetup, setUpKeySignIn } from "./key-setup-core";
+import { alreadyKeyed, chooseKey, planSetup, setUpKeySignIn } from "./key-setup-core";
 import { formatInstallKey, installKeyUnix, pickKey, planInstallKey, readInstallKey } from "./server-keys-core";
 import { fail, known, onServer, prepare, type Host } from "./server-run";
 import {
@@ -60,7 +60,7 @@ function containerTool(host: Host, verb: CtrVerb): Tool {
 function installKeyTool(host: Host): Tool {
   let keys: KeyInfo[] = [];
   return {
-    id: "install-key", heading: `Install a key: ${host.name}`, title: "Install a key on this host…", hint: "let a vault key sign in to this server", keywords: "server host authorized_keys public key login passwordless sign in",
+    id: "install-key", heading: `Install a key: ${host.name}`, title: "Install a key on this host…", hint: "add a key to this server, and change nothing else", keywords: "server host authorized_keys public key login passwordless sign in",
     input: { label: "Key", hint: "the name of a key under SSH keys… in the vault" },
     prepare: async () => {
       await prepare(host)();
@@ -85,15 +85,21 @@ function installKeyTool(host: Host): Tool {
  */
 function keySignInTool(host: Host): Tool {
   let keys: KeyInfo[] = [];
-  const choice = (text: string) => chooseKey(keys, text, host.name);
+  let moot: string | null = null; // set once the profile is known to use a key already
+  const choice = (text: string) => {
+    if (moot) throw new Error(moot);
+    return chooseKey(keys, text, host.name);
+  };
   return {
-    id: "key-sign-in", heading: `Set up key sign-in: ${host.name}`, title: "Set up key sign-in…", hint: "make a key, put it on this server, and sign in with it",
+    id: "key-sign-in", heading: `Set up key sign-in: ${host.name}`, title: "Set up key sign-in…", hint: "move this profile from a password to a key: make or pick one, install it, check it, switch",
     keywords: "server host ssh key generate keygen new authorized_keys public key login passwordless password sign in setup",
     input: { label: "Key", hint: "leave empty to make a new key named after this profile, or type the name of a key in the vault" },
     blank: true,
     prepare: async () => {
       await prepare(host)();
       keys = await api.listKeys();
+      const p = (await api.listProfiles()).find((x) => x.id === host.profile);
+      moot = p ? alreadyKeyed(p.authMethod, p.keyId, keys) : null;
     },
     action: {
       label: "Set up",
