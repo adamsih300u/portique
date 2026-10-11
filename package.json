@@ -2,12 +2,17 @@
   "name": "portique",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "tauri": "tauri",
+    "licenses": "node scripts/gen-licenses.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -23,8 +28,14 @@
     "@xterm/xterm": "^6.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
     "typescript": "~6.0.3",
-    "vite": "^8.0.16"
+    "typescript-eslint": "^8.71.1",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.11"
   }
 }

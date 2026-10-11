@@ -25,3 +25,4 @@ dist-ssr
 
 # Windows build output
 dist-win
+.claude/worktrees

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr review --approve:*)",
+      "Bash(gh api*merge*)",
+      "Bash(gh api*rulesets*)",
+      "Bash(gh api*branches/*/protection*)"
+    ]
+  }
+}

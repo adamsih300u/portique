@@ -20,7 +20,8 @@ const sections = (quakeKey: string, quakeOn: boolean): [string, Row[]][] => [
     ["Ctrl+Shift+C / V", "Copy / paste"],
     ["Right-click", "Copy selection, or paste"],
     ["Shift+Right-click", "Pane menu"],
-    ["Ctrl+Shift+↑ / ↓", "Previous / next prompt"],
+    ["Ctrl+Shift+↑ / ↓", "Previous / next prompt (needs shell integration)"],
+    ["Enter / Esc", "While reconnecting: retry now / stop"],
     ["Ctrl+click", "Open a link"],
     ["Ctrl+wheel", "Text size (also Ctrl+= / Ctrl+-)"],
     ["Ctrl+0", "Reset text size"],
@@ -31,21 +32,29 @@ const sections = (quakeKey: string, quakeOn: boolean): [string, Row[]][] => [
     ["Double-click / Enter", "Open folder, or copy file across"],
     ["F2 / Del", "Rename / delete"],
     ["Ctrl+Shift+N", "New folder"],
-    ["Backspace", "Parent folder"],
+    ["Backspace / Alt+↑", "Parent folder"],
+    ["Ctrl+A", "Select all"],
+    ["Ctrl+click / Shift+click", "Select several"],
     ["F5", "Refresh"],
   ]],
-  ["API requests", [
+  ["API connections", [
+    ["+ New → API", "Make a connection"],
+    ["Double-click", "Open it"],
     ["Ctrl+Shift+A", "New request"],
     ["Ctrl+Enter", "Send"],
     ["Esc", "Cancel while waiting"],
-    ["Ctrl+S", "Save"],
+    ["Ctrl+S", "Save the request"],
     ["Ctrl+L", "Go to the address"],
     ["Paste a curl command", "Import it into the request"],
-    ["Right-click", "Copy as cURL, environments, layout"],
+    ["Right-click", "Copy as cURL, environments, settings"],
   ]],
   ["Window", [
-    ["Ctrl+Shift+P", "Command palette: hosts, tabs, actions"],
+    ["Ctrl+Shift+P", "Command palette: hosts, tabs, tools, actions"],
     ["Ctrl+Shift+F", "Find in the terminal's scrollback"],
+    ["Enter / F3", "Find: next (Shift: previous)"],
+    ["Alt+C / Alt+W / Alt+R", "Find: case / whole word / regex"],
+    ["Ctrl+Shift+B", "Show / hide the sidebar"],
+    ["Drag sidebar edge", "Resize (double-click resets)"],
     ["F1", "This list"],
     ...(quakeOn ? [[quakeKey, "Show / hide drop-down"]] as Row[] : []),
   ]],
@@ -70,7 +79,8 @@ export function toggleHelp(quakeKey: string, quakeOn: boolean) {
         h("span", {}, what))),
     ]));
   open = panel;
-  document.body.append(panel);
+  // Inside the sidebar so it inherits the interface colours, which are set per region rather than on the page.
+  (document.querySelector("aside") ?? document.body).append(panel);
   const away = (e: Event) => {
     if (e.type === "keydown" && (e as KeyboardEvent).key !== "Escape") return;
     if (e.type === "mousedown" && (panel.contains(e.target as Node) || (e.target as HTMLElement).closest?.(".help-link"))) return;

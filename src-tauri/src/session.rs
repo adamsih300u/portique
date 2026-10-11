@@ -6,20 +6,34 @@ use serde_json::json;
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use zeroize::Zeroizing;
 
-/// Frames sent to the frontend: first byte 0 = terminal data, 1 = JSON status.
+/// Frames sent to a listener: first byte 0 = terminal data, 1 = JSON status.
+///
+/// The listener is usually the page, over a Tauri `Channel`; `Emitter::sink` points a session at Rust
+/// code instead (an agent's session, see `agent/`), which receives the same frames.
 #[derive(Clone)]
-pub struct Emitter(Channel<InvokeResponseBody>);
+pub struct Emitter(Arc<dyn Fn(Vec<u8>) + Send + Sync>);
 
 impl Emitter {
     pub fn new(c: Channel<InvokeResponseBody>) -> Self {
-        Self(c)
+        Self(Arc::new(move |frame| {
+            let _ = c.send(InvokeResponseBody::Raw(frame));
+        }))
+    }
+    /// Sends every frame, built as for the page, to `f`.
+    pub fn sink(f: impl Fn(Vec<u8>) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+    /// Passes on a frame that was built already.
+    pub fn frame(&self, f: Vec<u8>) {
+        (self.0)(f);
     }
     pub fn data(&self, d: &[u8]) {
         let mut v = Vec::with_capacity(d.len() + 1);
         v.push(0);
         v.extend_from_slice(d);
-        let _ = self.0.send(InvokeResponseBody::Raw(v));
+        (self.0)(v);
     }
     /// state: connecting | connected | vault-locked | closed | lost | error | need-password | need-passphrase | tunnels
     /// Like `status`, but `message` is a JSON document the frontend parses itself.
@@ -29,7 +43,7 @@ impl Emitter {
     pub fn status(&self, state: &str, message: &str) {
         let mut v = vec![1u8];
         v.extend_from_slice(json!({ "state": state, "message": message }).to_string().as_bytes());
-        let _ = self.0.send(InvokeResponseBody::Raw(v));
+        (self.0)(v);
     }
 }
 
@@ -92,10 +106,14 @@ pub struct Params {
     pub sessions: Sessions,
     pub cols: u16,
     pub rows: u16,
-    pub password: Option<String>,
-    pub passphrase: Option<String>,
+    pub password: Option<Zeroizing<String>>,
+    pub passphrase: Option<Zeroizing<String>>,
     /// Open an SFTP file browser instead of a shell (SSH profiles only).
     pub sftp: bool,
+    /// Offer a local SOCKS5 proxy through the server instead of a shell (SSH profiles only).
+    pub proxy: bool,
+    /// Refuse a host key that isn't pinned yet instead of asking about it: for a connection nobody is watching.
+    pub pinned_hosts_only: bool,
 }
 
 pub fn start(
@@ -113,7 +131,8 @@ pub fn start(
     let sessions = sessions.clone();
     let sid = id.clone();
     tauri::async_runtime::spawn(async move {
-        if !crate::vault::global().is_unlocked() {
+        // A shell on this computer needs nothing from the vault.
+        if profile.protocol != Protocol::Local && !crate::vault::global().is_unlocked() {
             em.status("vault-locked", "Vault is locked");
             sessions.map.lock().unwrap().remove(&sid);
             return;
@@ -121,9 +140,12 @@ pub fn start(
         em.status("connecting", &format!("Connecting to {}…", profile.name));
         let res = match profile.protocol {
             Protocol::Ssh if params.sftp => crate::ssh::run_sftp(&profile, params, em.clone(), rx).await,
+            Protocol::Ssh if params.proxy => crate::ssh::run_proxy(&profile, params, em.clone(), rx).await,
             Protocol::Ssh => crate::ssh::run(&profile, params, em.clone(), rx).await,
             Protocol::Telnet => crate::telnet::run(&profile, params, em.clone(), rx, tx).await,
             Protocol::Serial => crate::serial::run(&profile, params, em.clone(), rx, tx).await,
+            Protocol::Local => crate::local::run(&profile, params, em.clone(), rx).await,
+            Protocol::Api => Err(anyhow::anyhow!("an API connection has no terminal session; open it from the sidebar to send requests")),
         };
         match res {
             Ok(()) => em.status("closed", "Session closed"),
@@ -144,7 +166,7 @@ pub fn start(
 /// Watches output for `login:` / `password:` style prompts and types saved credentials once each.
 pub struct AutoLogin {
     username: Option<String>,
-    password: Option<String>,
+    password: Option<Zeroizing<String>>,
     tail: Vec<u8>,
     deadline: std::time::Instant,
 }
@@ -153,7 +175,7 @@ pub struct AutoLogin {
 const AUTOLOGIN_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl AutoLogin {
-    pub fn new(username: Option<String>, password: Option<String>) -> Self {
+    pub fn new(username: Option<String>, password: Option<Zeroizing<String>>) -> Self {
         Self {
             username: username.filter(|s| !s.is_empty()),
             password: password.filter(|s| !s.is_empty()),
@@ -182,14 +204,14 @@ impl AutoLogin {
         }
         if self.password.is_some() && t.ends_with("password:") {
             self.tail.clear();
-            return Some(format!("{}\r", self.password.take().unwrap()).into_bytes());
+            let pw = self.password.take().unwrap();
+            return Some(format!("{}\r", pw.as_str()).into_bytes());
         }
         None
     }
 }
 
-pub fn saved_password(p: &Profile, override_pw: &Option<String>) -> Option<String> {
-    override_pw
-        .clone()
-        .or_else(|| crate::vault::global().get(&crate::vault::password_account(&p.id)).ok().flatten())
+/// The password typed for this attempt, else the saved one. Either way the copy wipes itself on drop.
+pub fn saved_password(p: &Profile, override_pw: &Option<Zeroizing<String>>) -> Option<Zeroizing<String>> {
+    override_pw.clone().or_else(|| crate::vault::global().get(&crate::vault::password_account(&p.id)).ok().flatten())
 }

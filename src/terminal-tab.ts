@@ -1,5 +1,5 @@
-import { IMarker, Terminal } from "@xterm/xterm";
-import { ClipboardAddon, IClipboardProvider } from "@xterm/addon-clipboard";
+import { type IMarker, Terminal } from "@xterm/xterm";
+import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
@@ -7,8 +7,9 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { api, Channel, Profile } from "./api";
-import { getTheme, xtermTheme } from "./themes";
+import { isTerminalReply } from "./agent-core";
+import { api, Channel, type Profile } from "./api";
+import { effectiveFont, getTheme, xtermTheme } from "./themes";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
 import { toBytes } from "./ui";
 import { ensureUnlocked } from "./vault-ui";
@@ -50,6 +51,10 @@ const clipboardProvider: IClipboardProvider = {
 };
 
 /** One terminal + one session. Reconnects on Enter after the session ends, or by itself if the link drops. */
+/** Silence that means output has stopped, and the least run of activity worth flagging (ms). */
+const QUIET_MS = 2000;
+const QUIET_MIN_RUN = 3000;
+
 export class TerminalTab {
   readonly el = document.createElement("div");
   readonly term: Terminal;
@@ -71,7 +76,23 @@ export class TerminalTab {
   private attempt = 0;
   private retryTimer: number | undefined;
   private retryNow: (() => void) | null = null;
+  private quietTimer: number | undefined;
+  /** When the current stretch of activity began (Enter pressed, or output after a quiet spell). */
+  private runStart: number | null = null;
+  private lastOutput = 0;
+  private lastInput = 0;
+  /** The session an agent opened that this tab shows, until the person reconnects it as their own. */
+  agentSession: string | null = null;
+  /** Which agent session to attach to on the next `connect`. */
+  private attachTo: string | null = null;
+  /** Who holds the keyboard of an agent's session. */
+  controller: "agent" | "user" = "agent";
+  /** The agent's name for itself, for the badge. */
+  agentName = "";
+  onController: () => void = () => {};
   onState: (s: TabState) => void = () => {};
+  /** Output has stopped after a command or a stretch of activity (shell-integration mark, else a quiet spell). */
+  onSettled: () => void = () => {};
   onTunnels: () => void = () => {};
   /** Search results changed: the 0-based index of the active match (-1 if none or too many) and the total. */
   onFindResults: (index: number, count: number) => void = () => {};
@@ -92,6 +113,7 @@ export class TerminalTab {
       linkHandler: { activate: openLink, allowNonHttpProtocols: false },
       ...this.options(profile),
     });
+    this.paintHost();
     this.term.loadAddon(this.fit);
     this.term.loadAddon(this.searcher);
     this.searcher.onDidChangeResults((r) => this.onFindResults(r.resultIndex, r.resultCount));
@@ -104,9 +126,18 @@ export class TerminalTab {
       return true;
     });
 
-    this.term.onData((d) => this.send(toBytes(d)));
-    this.term.onBinary((d) => this.send(Uint8Array.from(d, (c) => c.charCodeAt(0))));
+    // Anything that is not the terminal answering a program (a key, a paste, drag and drop, input-method text) is the
+    // person, and takes the keyboard from an agent; `onKey` alone would miss all but real key presses.
+    this.term.onData((d) => {
+      if (!isTerminalReply(d)) this.takeOver();
+      this.send(toBytes(d));
+    });
+    this.term.onBinary((d) => {
+      this.takeOver();
+      this.send(Uint8Array.from(d, (c) => c.charCodeAt(0)));
+    });
     this.term.onKey(({ domEvent }) => {
+      this.takeOver();
       if (this.state === "disconnected" && domEvent.key === "Enter") void this.connect();
       else if (this.state === "reconnecting") {
         if (domEvent.key === "Enter") this.retryNow?.();
@@ -148,13 +179,19 @@ export class TerminalTab {
 
   private options(p: Profile) {
     const a = p.appearance;
+    const theme = getTheme(a.themeId);
+    // A theme's spacing belongs to its font, so it only applies while that font is the one in use.
+    const font = effectiveFont(a);
+    const spaced = theme.fontFamily !== undefined && theme.fontFamily === font;
     return {
-      fontFamily: a.fontFamily,
+      fontFamily: font,
+      letterSpacing: spaced ? theme.letterSpacing ?? 0 : 0,
+      lineHeight: spaced ? theme.lineHeight ?? 1 : 1,
       fontSize: a.fontSize,
       cursorStyle: a.cursorStyle,
       cursorBlink: a.cursorBlink,
       scrollback: a.scrollback,
-      theme: xtermTheme(getTheme(a.themeId)),
+      theme: xtermTheme(theme),
     };
   }
 
@@ -226,10 +263,16 @@ export class TerminalTab {
     }
   }
 
+  /** The host's padding (text breathing room, taskbar inset) takes the terminal's own background. */
+  private paintHost() {
+    this.el.style.background = this.term.options.theme?.background ?? "";
+  }
+
   /** Re-apply font/colour settings after the profile was edited. */
   applyProfile(p: Profile) {
     this.profile = p;
     Object.assign(this.term.options, this.options(p));
+    this.paintHost();
     this.setLigatures(p.appearance.ligatures);
     this.refit();
   }
@@ -276,6 +319,17 @@ export class TerminalTab {
     if (this.sessionId) void api.resize(this.sessionId, this.term.cols, this.term.rows);
   }
 
+  /**
+   * Once the link is up, put the cursor in the terminal, so a double-click on a profile
+   * needs no extra click. Only when this pane is on screen and nothing else holds focus
+   * (a dialog or another pane the user is typing in keeps it).
+   */
+  private takeFocusIfIdle() {
+    const a = document.activeElement;
+    const idle = !a || a === document.body || a === document.documentElement;
+    if (idle && this.el.offsetParent !== null) this.term.focus();
+  }
+
   focus() {
     this.term.focus();
   }
@@ -310,7 +364,25 @@ export class TerminalTab {
     } else if (kind === "D" && last?.start && !last.end) {
       last.end = this.term.registerMarker(0) ?? undefined;
       last.exit = arg === undefined || arg === "" ? undefined : Number(arg);
+      this.runStart = null;
+      clearTimeout(this.quietTimer);
+      this.onSettled();
     }
+  }
+
+  /** Output that is not just the echo of typing counts as activity; the quiet-spell fallback covers hosts without shell integration. */
+  private noteOutput() {
+    const now = Date.now();
+    if (now - this.lastInput < 150) return;
+    this.runStart ??= now;
+    this.lastOutput = now;
+    if (this.hasMarks) return; // the prompt marks tell us exactly when a command ends
+    clearTimeout(this.quietTimer);
+    this.quietTimer = window.setTimeout(() => {
+      const long = this.lastOutput - (this.runStart ?? this.lastOutput) >= QUIET_MIN_RUN;
+      this.runStart = null;
+      if (long) this.onSettled();
+    }, QUIET_MS);
   }
 
   private lastFinished() {
@@ -388,6 +460,8 @@ export class TerminalTab {
   }
 
   private send(b: Uint8Array) {
+    this.lastInput = Date.now();
+    if (b.includes(13)) this.runStart = this.lastInput;
     if (this.sessionId && this.state === "connected") void api.input(this.sessionId, b);
   }
 
@@ -400,9 +474,59 @@ export class TerminalTab {
     if (s) await navigator.clipboard.writeText(s).catch(() => {});
   }
 
+  get connected() {
+    return this.state === "connected";
+  }
+
+  /** The id of the live session, for commands that run beside the shell; null when it isn't connected. */
+  get session(): string | null {
+    return this.state === "connected" ? this.sessionId : null;
+  }
+
+  /** Types a saved command into the session (as a paste, so a multi-line one is safe); `enter` also runs it. */
+  typeCommand(text: string, enter: boolean) {
+    if (!this.connected) return;
+    this.takeOver();
+    this.term.paste(text.replace(/\r?\n/g, "\r"));
+    if (enter) this.send(toBytes("\r"));
+    this.term.focus();
+  }
+
   async paste() {
     const s = await navigator.clipboard.readText().catch(() => "");
-    if (s) this.term.paste(s);
+    if (!s) return;
+    this.takeOver();
+    this.term.paste(s);
+  }
+
+  // ------------------------------------------------------------ a session an agent opened
+
+  /** Shows the session an agent opened, instead of connecting a new one. Call before `connect`. */
+  showAgentSession(id: string, client: string) {
+    this.agentSession = id;
+    this.attachTo = id;
+    this.agentName = client;
+  }
+
+  /** The person typed: the agent is paused until they hand the terminal back. */
+  private takeOver() {
+    if (!this.agentSession || this.controller === "user" || this.state !== "connected") return;
+    this.controller = "user";
+    void api.agentTakeover(this.agentSession);
+    this.onController();
+  }
+
+  /** Lets the agent type again. */
+  handBack() {
+    if (!this.agentSession || this.controller === "agent") return;
+    this.controller = "agent";
+    void api.agentResume(this.agentSession);
+    this.onController();
+  }
+
+  /** The person pauses the agent without typing anything. */
+  pauseAgent() {
+    this.takeOver();
   }
 
   async connect(password?: string, passphrase?: string) {
@@ -413,8 +537,21 @@ export class TerminalTab {
     const ch = new Channel<ArrayBuffer>();
     ch.onmessage = (buf) => this.onFrame(buf);
     this.term.options.disableStdin = false;
+    // Connecting again after an agent's session ended makes a session of the person's own.
+    const attach = this.attachTo;
+    this.attachTo = null;
+    if (!attach && this.agentSession) {
+      this.agentSession = null;
+      this.controller = "agent";
+      this.onController();
+    }
     try {
-      this.sessionId = await api.connect(this.profile.id, this.term.cols, this.term.rows, ch, password, passphrase);
+      if (attach) {
+        this.sessionId = attach;
+        await api.agentAttach(attach, ch);
+      } else {
+        this.sessionId = await api.connect(this.profile.id, this.term.cols, this.term.rows, ch, password, passphrase);
+      }
     } catch (e) {
       this.fail(String(e));
     }
@@ -424,9 +561,15 @@ export class TerminalTab {
     const bytes = new Uint8Array(buf);
     if (bytes[0] === 0) {
       this.term.write(bytes.subarray(1));
+      this.noteOutput();
       return;
     }
-    const { state, message } = JSON.parse(new TextDecoder().decode(bytes.subarray(1)));
+    const { state, message } = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as { state: string; message: string };
+    // An agent's session is not ours to retry, unlock or log in to again: say how it ended and let the person decide.
+    if (this.agentSession && ["lost", "vault-locked", "need-password", "need-passphrase"].includes(state)) {
+      this.ended(`\r\n\x1b[2m[The agent's session ended${message ? `: ${message}` : ""}. Press Enter to open one of your own]\x1b[0m\r\n`);
+      return;
+    }
     switch (state) {
       case "connecting":
         this.term.writeln(`\x1b[2m${message}\x1b[0m`);
@@ -437,6 +580,7 @@ export class TerminalTab {
         this.attempt = 0;
         this.setState("connected");
         this.refit();
+        this.takeFocusIfIdle();
         break;
       case "lost":
         if (this.profile.autoReconnect) this.scheduleReconnect("Connection lost");
@@ -499,6 +643,7 @@ export class TerminalTab {
   dispose() {
     this.disposed = true;
     clearTimeout(this.retryTimer);
+    clearTimeout(this.quietTimer);
     this.ro.disconnect();
     if (this.sessionId) void api.close(this.sessionId);
     this.term.dispose();

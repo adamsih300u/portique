@@ -1,4 +1,5 @@
-import { api, Settings } from "./api";
+import { agentSection } from "./agent-ui";
+import { api, type LocalShell, type Settings } from "./api";
 import { field, h, modal } from "./ui";
 
 /** Turns a key press into an accelerator such as "Ctrl+Alt+Space"; null while only modifiers are down. */
@@ -14,14 +15,38 @@ function accelerator(e: KeyboardEvent): string | null {
 /** The settings pane. Resolves with the new settings once saved, or null if cancelled. */
 export async function settingsDialog(current: Settings): Promise<Settings | null> {
   const next: Settings = structuredClone(current);
+  const shells: LocalShell[] = await api.listLocalShells().catch(() => []);
+  const agents = agentSection(await api.agentStatus().catch(() => null), current.agent.requirePassword);
 
   const scale = h("select", {},
     h("option", { value: "normal" }, "Normal"), h("option", { value: "large" }, "Large"));
   scale.value = current.uiScale;
+  const lockAfter = h("select", {},
+    ...[[0, "Never"], [1, "1 minute"], [5, "5 minutes"], [15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"]]
+      .map(([m, label]) => h("option", { value: String(m) }, String(label))));
+  lockAfter.value = String(current.vaultIdleMinutes);
   const restore = h("input", { type: "checkbox", checked: current.restoreTabs });
   const gpu = h("input", { type: "checkbox", checked: current.gpu });
   const quake = h("input", { type: "checkbox", checked: current.quake });
   const dir = h("input", { value: current.sftpLocalDir, placeholder: "The folder it was last in", spellcheck: false });
+
+  // Which shells on this computer to offer as terminals. Turning the section on with nothing chosen picks the usual one.
+  const local = h("input", { type: "checkbox", checked: current.localTerminals });
+  const picks = shells.map((s) => ({ s, box: h("input", { type: "checkbox", checked: current.localShells.includes(s.id) }) }));
+  const pickList = h("div", { class: "local-shells" },
+    ...picks.map(({ s, box }) => h("label", { class: "check" }, box, ` ${s.name}`)));
+  const syncPicks = () => {
+    pickList.hidden = !local.checked;
+    for (const { box } of picks) box.disabled = !local.checked;
+  };
+  local.addEventListener("change", () => {
+    if (local.checked && !picks.some(({ box }) => box.checked)) {
+      const usual = picks.find(({ s }) => s.isDefault) ?? picks[0];
+      if (usual) usual.box.checked = true;
+    }
+    syncPicks();
+  });
+  syncPicks();
 
   // The hotkey is recorded by pressing it, so nobody has to know the accelerator syntax.
   const key = h("input", { class: "hotkey", value: current.quakeKey, readOnly: true, spellcheck: false, "aria-label": "Drop-down hotkey" });
@@ -44,8 +69,15 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
     field("Interface text size", scale, "Terminal text has its own size: Ctrl+mouse wheel (or Ctrl+ + / −, Ctrl+0 to reset) in a terminal."),
     h("h3", {}, "Startup"),
     h("label", { class: "check" }, restore, " Reopen my tabs when Portique starts"),
+    h("h3", {}, "Vault"),
+    field("Lock the vault after", lockAfter, "Counted from your last key press or click. Open connections stay open; saved passwords and keys are asked for again. \"Never\" keeps the vault unlocked until you lock it or quit."),
     h("h3", {}, "File browser"),
     field("Start in this folder on this computer", dir, "Each profile can choose its own folders in the profile editor; this is the default for the rest."),
+    h("h3", {}, "Local terminals"),
+    h("label", { class: "check" }, local, " Show local terminals"),
+    shells.length ? pickList : h("small", {}, "No shells were found on this computer."),
+    h("small", {}, "Shells on this computer open in their own tabs, listed under Local in the sidebar."),
+    agents.el,
     h("h3", {}, "Drop-down mode"),
     h("label", { class: "check" }, quake, " Drop-down terminal on a global hotkey"),
     field("Hotkey", key, undefined),
@@ -72,7 +104,15 @@ export async function settingsDialog(current: Settings): Promise<Settings | null
         next.restoreTabs = restore.checked;
         next.sftpLocalDir = dir.value.trim();
         next.uiScale = scale.value as Settings["uiScale"];
-        await api.setPrefs(next.restoreTabs, next.sftpLocalDir, next.uiScale);
+        next.vaultIdleMinutes = Number(lockAfter.value);
+        next.localTerminals = local.checked;
+        next.localShells = picks.filter(({ box }) => box.checked).map(({ s }) => s.id);
+        await api.setLocalTerminals(next.localTerminals, next.localShells);
+        await api.setPrefs(next.restoreTabs, next.sftpLocalDir, next.uiScale, next.vaultIdleMinutes);
+        if (agents.enabled() !== current.agent.enabled || agents.requirePassword() !== current.agent.requirePassword) {
+          const status = await api.agentSetEnabled(agents.enabled(), agents.requirePassword());
+          next.agent = { ...next.agent, enabled: status.enabled, requirePassword: agents.requirePassword() };
+        }
         saved = next;
       },
     },

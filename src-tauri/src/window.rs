@@ -30,7 +30,58 @@ pub struct Settings {
     pub sftp_local_dir: String,
     /// Size of the interface text: "normal" or "large".
     pub ui_scale: String,
+    /// Minutes without activity before the vault locks itself; 0 means never.
+    pub vault_idle_minutes: u32,
+    /// Offer shells on this computer as terminals (off until the user asks for them).
+    pub local_terminals: bool,
+    /// Ids of the shells to offer (see `local::Shell::id`).
+    pub local_shells: Vec<String>,
+    /// How each local shell looks (theme, font, cursor), by shell id; a shell not in here uses the defaults.
+    pub local_look: std::collections::HashMap<String, crate::store::Appearance>,
+    /// Whether AI agents may use terminals through the MCP server, and which profiles they may use.
+    pub agent: AgentSettings,
 }
+
+/// How far an agent may go on one profile. Kept in the settings by profile id, never in the profile itself, so an
+/// imported, duplicated or synced profile cannot arrive with access already granted.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentMode {
+    /// The agent cannot see the profile.
+    #[default]
+    Off,
+    /// The agent can open it and type into it, and each step waits for the person's yes.
+    Ask,
+    /// The agent can open it and type into it without asking.
+    Allow,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AgentSettings {
+    /// The MCP server only listens while this is on (off until the user turns it on).
+    pub enabled: bool,
+    /// Before an agent first runs anything in a session, the person enters the master password; it holds until the vault
+    /// locks. Applies only when a vault exists. On unless the person turns it off.
+    pub require_password: bool,
+    /// Access by profile id (`local:<shell id>` for local terminals); a profile not in here is `Off`.
+    pub profiles: std::collections::HashMap<String, AgentMode>,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self { enabled: false, require_password: true, profiles: Default::default() }
+    }
+}
+
+impl AgentSettings {
+    pub fn mode(&self, profile_id: &str) -> AgentMode {
+        self.profiles.get(profile_id).copied().unwrap_or_default()
+    }
+}
+
+/// The idle times the settings pane offers (minutes; 0 = never).
+pub const VAULT_IDLE_CHOICES: [u32; 6] = [0, 1, 5, 15, 30, 60];
 
 /// Colours of the app chrome (not the terminal). Each is "#rrggbb" or empty for the default.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -55,7 +106,7 @@ impl UiColours {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { quake: false, quake_key: DEFAULT_KEY.into(), gpu: true, ui: UiColours::default(), restore_tabs: true, sftp_local_dir: String::new(), ui_scale: "normal".into() }
+        Self { quake: false, quake_key: DEFAULT_KEY.into(), gpu: true, ui: UiColours::default(), restore_tabs: true, sftp_local_dir: String::new(), ui_scale: "normal".into(), vault_idle_minutes: 15, local_terminals: false, local_shells: Vec::new(), local_look: Default::default(), agent: AgentSettings::default() }
     }
 }
 
@@ -149,6 +200,27 @@ pub fn open_link(app: &AppHandle, url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_saved_before_the_lock_time_existed_get_fifteen_minutes() {
+        let s: Settings = serde_json::from_str(r#"{"quake":true}"#).unwrap();
+        assert_eq!(s.vault_idle_minutes, 15);
+        assert!(VAULT_IDLE_CHOICES.contains(&s.vault_idle_minutes));
+    }
+
+    #[test]
+    fn agents_start_switched_off_with_no_profile_open_to_them() {
+        let s: Settings = serde_json::from_str(r#"{"quake":true}"#).unwrap();
+        assert!(!s.agent.enabled);
+        assert!(s.agent.require_password, "the password check is on unless the person turns it off");
+        assert_eq!(s.agent.mode("anything"), AgentMode::Off);
+        let before: Settings = serde_json::from_str(r#"{"agent":{"enabled":true,"profiles":{}}}"#).unwrap();
+        assert!(before.agent.require_password, "settings saved before the option existed get the safe value");
+        let off: Settings = serde_json::from_str(r#"{"agent":{"requirePassword":false}}"#).unwrap();
+        assert!(!off.agent.require_password);
+        let s: Settings = serde_json::from_str(r#"{"agent":{"enabled":true,"profiles":{"a":"ask","b":"allow"}}}"#).unwrap();
+        assert_eq!((s.agent.mode("a"), s.agent.mode("b"), s.agent.mode("z")), (AgentMode::Ask, AgentMode::Allow, AgentMode::Off));
+    }
 
     #[test]
     fn default_hotkey_is_understood() {

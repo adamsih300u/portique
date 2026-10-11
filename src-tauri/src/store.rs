@@ -2,7 +2,9 @@
 
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 pub fn data_dir() -> Result<PathBuf> {
     resolve_dir(&dirs::config_dir().context("no config directory available")?)
@@ -49,6 +51,10 @@ pub enum Protocol {
     Ssh,
     Telnet,
     Serial,
+    /// An HTTP API endpoint: opens the API client, not a terminal. Its settings are in `Profile::api`.
+    Api,
+    /// A shell on this computer (`local.rs`). Never saved: its profiles exist only in memory.
+    Local,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -130,6 +136,19 @@ impl Default for Appearance {
     }
 }
 
+impl Appearance {
+    /// The look ends up in CSS and the terminal's options on the frontend, so keep every field in a sane range.
+    pub fn valid(&self) -> bool {
+        let font_ok = self.font_family.len() <= 200 && !self.font_family.chars().any(|c| c.is_control() || "<>{};\\@".contains(c));
+        font_ok
+            && (6.0..=48.0).contains(&self.font_size)
+            && ["block", "underline", "bar"].contains(&self.cursor_style.as_str())
+            && self.scrollback <= 1_000_000
+            && !self.theme_id.is_empty()
+            && self.theme_id.len() <= 100
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Profile {
@@ -156,6 +175,11 @@ pub struct Profile {
     pub local_dir: String,
     /// SSH only: where it starts on the server (empty: the login folder).
     pub remote_dir: String,
+    /// API only: base address, default sign-in and headers, and options. Opaque here: the frontend owns the shape.
+    pub api: serde_json::Value,
+    /// Commands offered in the palette while a tab for this profile is on screen. Opaque here: the frontend owns the shape.
+    /// Plain data like the host name, so nothing secret belongs in one.
+    pub commands: serde_json::Value,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -203,7 +227,49 @@ pub fn save_profiles(p: &Vec<Profile>) -> Result<()> {
     write_json("profiles.json", p)
 }
 
+/// Prefix of the ids given to quick-connect profiles, which exist only in memory.
+pub const QUICK_PREFIX: &str = "quick:";
+
+fn quick_profiles() -> &'static Mutex<HashMap<String, Profile>> {
+    static QUICK: OnceLock<Mutex<HashMap<String, Profile>>> = OnceLock::new();
+    QUICK.get_or_init(Default::default)
+}
+
+/// Remembers a profile for the life of the app so a session can start from it by id. It is never written
+/// to `profiles.json`. Only a plain host: no jump host, forwards or API settings are carried over.
+pub fn add_quick(p: Profile) -> Result<Profile> {
+    if !matches!(p.protocol, Protocol::Ssh | Protocol::Telnet) {
+        anyhow::bail!("quick connect handles SSH and Telnet only");
+    }
+    let host = p.host.trim();
+    if host.is_empty() || host.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        anyhow::bail!("not a valid host name");
+    }
+    if p.port == 0 {
+        anyhow::bail!("not a valid port");
+    }
+    let q = Profile {
+        id: format!("{QUICK_PREFIX}{}", uuid::Uuid::new_v4()),
+        host: host.to_string(),
+        group: String::new(),
+        key_id: None,
+        jump_host: None,
+        forwards: Vec::new(),
+        api: serde_json::Value::Null,
+        commands: serde_json::Value::Null,
+        ..p
+    };
+    quick_profiles().lock().unwrap().insert(q.id.clone(), q.clone());
+    Ok(q)
+}
+
 pub fn get_profile(id: &str) -> Result<Profile> {
+    if id.starts_with(crate::local::PREFIX) {
+        return crate::local::profile_for(id, &crate::window::load()).context("that local terminal is not turned on in the settings");
+    }
+    if let Some(p) = quick_profiles().lock().unwrap().get(id) {
+        return Ok(p.clone());
+    }
     load_profiles()?
         .into_iter()
         .find(|p| p.id == id)
@@ -220,6 +286,54 @@ mod tests {
             cursor: "#ffffff".into(), selection: "#333333".into(), ansi: vec!["#123456".into(); 16],
             font_family: Some("'Irix Screen Mono 15', monospace".into()), font_size: Some(15.0),
         }
+    }
+
+    #[test]
+    fn saved_commands_round_trip_untouched_and_older_profiles_have_none() {
+        let old: Profile = serde_json::from_str(r#"{"id":"a","name":"srv","protocol":"ssh","host":"h","port":22}"#).unwrap();
+        assert!(old.commands.is_null());
+
+        let cmds = serde_json::json!([{ "id": "1", "name": "Disk", "text": "df -h", "mode": "run" }]);
+        let p = Profile { commands: cmds.clone(), ..Default::default() };
+        let back: Profile = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back.commands, cmds);
+    }
+
+    #[test]
+    fn quick_profiles_resolve_by_id_and_keep_to_a_plain_host() {
+        let q = add_quick(Profile {
+            name: "10.0.0.5".into(), host: " 10.0.0.5 ".into(), port: 22, protocol: Protocol::Ssh,
+            group: "g".into(), jump_host: Some("j".into()), key_id: Some("k".into()),
+            forwards: vec![Forward { kind: ForwardKind::Dynamic, listen_port: 1, dest_host: String::new(), dest_port: 0 }],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(q.id.starts_with(QUICK_PREFIX));
+        assert_eq!(q.host, "10.0.0.5");
+        assert!(q.jump_host.is_none() && q.key_id.is_none() && q.forwards.is_empty() && q.group.is_empty());
+        assert_eq!(get_profile(&q.id).unwrap().host, "10.0.0.5");
+
+        let api = Profile { protocol: Protocol::Api, host: "h".into(), port: 80, ..Default::default() };
+        assert!(add_quick(api).is_err());
+        assert!(add_quick(Profile { host: "a b".into(), port: 22, ..Default::default() }).is_err());
+        assert!(add_quick(Profile { host: "a".into(), port: 0, ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn api_connections_round_trip_and_older_profiles_still_load() {
+        // A profile saved before API connections existed has no `api` field and a protocol we already knew.
+        let old: Profile = serde_json::from_str(r#"{"id":"a","name":"srv","protocol":"ssh","host":"h","port":22}"#).unwrap();
+        assert_eq!(old.protocol, Protocol::Ssh);
+        assert!(old.api.is_null());
+
+        // The frontend owns the shape of `api`; the backend must hand back exactly what it was given.
+        let json = r#"{"id":"b","name":"Orders","protocol":"api","host":"https://x.test/v1","api":{"baseUrl":"https://x.test/v1","via":"a","headers":[{"key":"X","value":"1","on":true}],"timeout":30}}"#;
+        let p: Profile = serde_json::from_str(json).unwrap();
+        assert_eq!(p.protocol, Protocol::Api);
+        let back = serde_json::to_value(&p).unwrap();
+        assert_eq!(back["protocol"], "api");
+        assert_eq!(back["api"]["baseUrl"], "https://x.test/v1");
+        assert_eq!(back["api"]["headers"][0]["key"], "X");
     }
 
     #[test]

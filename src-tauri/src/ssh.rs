@@ -13,7 +13,8 @@ use russh::{
     ChannelMsg, Disconnect,
 };
 use serde_json::json;
-use std::{collections::HashMap, future::Future, pin::Pin, sync::{Arc, Mutex}, time::Duration};
+use serde::Serialize;
+use std::{collections::HashMap, future::Future, pin::Pin, sync::{Arc, LazyLock, Mutex}, time::Duration};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 type KnownHosts = HashMap<String, String>;
@@ -39,6 +40,8 @@ struct Handler {
     sid: String,
     rejection: Arc<Mutex<Option<String>>>,
     remote: RemoteMap,
+    /// Rejects a host key that isn't pinned yet, with no question asked.
+    pinned_only: bool,
 }
 
 impl Handler {
@@ -96,6 +99,9 @@ impl client::Handler for Handler {
             }
         };
 
+        if self.pinned_only {
+            return self.reject(format!("{} hasn't been connected to and trusted yet, so its host key can't be checked here.", self.host_id));
+        }
         let answer = self.sessions.ask_host(&self.sid);
         self.em.status_json(
             "confirm-host",
@@ -138,6 +144,7 @@ fn dial<'a>(
             sid: params.sid.clone(),
             rejection: rejection.clone(),
             remote: remote.clone(),
+            pinned_only: params.pinned_hosts_only,
         };
         let config = Arc::new(client::Config {
             // A silent link is declared dead after ~45 s so the UI can reconnect.
@@ -186,6 +193,80 @@ fn dial<'a>(
     })
 }
 
+/// The logged-in connection of each open shell, by session id, so a one-off command can run beside the shell.
+static EXEC: LazyLock<Mutex<HashMap<String, Arc<Handle<Handler>>>>> = LazyLock::new(Default::default);
+
+/// Keeps a connection in `EXEC` until the session ends, however it ends.
+struct ExecRegistration(String);
+
+impl ExecRegistration {
+    fn new(sid: &str, session: &Arc<Handle<Handler>>) -> Self {
+        EXEC.lock().unwrap_or_else(|p| p.into_inner()).insert(sid.to_string(), session.clone());
+        Self(sid.to_string())
+    }
+}
+
+impl Drop for ExecRegistration {
+    fn drop(&mut self) {
+        EXEC.lock().unwrap_or_else(|p| p.into_inner()).remove(&self.0);
+    }
+}
+
+/// Most output of one command that is kept; the rest is dropped and `truncated` is set.
+const EXEC_MAX_OUT: usize = 1 << 20;
+const EXEC_MAX_SECS: u64 = 120;
+
+#[derive(Serialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecOut {
+    pub stdout: String,
+    pub stderr: String,
+    /// The exit status, if the server sent one.
+    pub code: Option<u32>,
+    pub truncated: bool,
+}
+
+fn push_capped(buf: &mut Vec<u8>, data: &[u8], truncated: &mut bool) {
+    let room = EXEC_MAX_OUT.saturating_sub(buf.len());
+    if data.len() > room {
+        *truncated = true;
+    }
+    buf.extend_from_slice(&data[..data.len().min(room)]);
+}
+
+/// Runs one command on the server of the open shell `sid`, on a new channel of the same connection
+/// (no second login). `stdin`, if given, is sent to it and then closed: a script for `sh` goes this way, which
+/// needs no quoting and does not depend on the account's login shell. Waits for it to finish, at most `secs` seconds.
+pub async fn exec(sid: &str, command: &str, stdin: Option<&str>, secs: u64) -> Result<ExecOut> {
+    let session = EXEC.lock().unwrap_or_else(|p| p.into_inner()).get(sid).cloned().context("this session is not connected")?;
+    let secs = secs.clamp(1, EXEC_MAX_SECS);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    let mut ch = session.channel_open_session().await.map_err(|_| anyhow!("the connection is gone; reconnect and try again"))?;
+    ch.exec(true, command).await?;
+    if let Some(input) = stdin {
+        ch.data(input.as_bytes()).await?;
+        ch.eof().await?;
+    }
+    let (mut out, mut err, mut code, mut truncated) = (Vec::new(), Vec::new(), None, false);
+    loop {
+        let msg = match tokio::time::timeout_at(deadline, ch.wait()).await {
+            Ok(m) => m,
+            Err(_) => {
+                let _ = ch.close().await;
+                bail!("The command took longer than {secs} seconds and was stopped");
+            }
+        };
+        match msg {
+            Some(ChannelMsg::Data { data }) => push_capped(&mut out, &data, &mut truncated),
+            Some(ChannelMsg::ExtendedData { data, ext: 1 }) => push_capped(&mut err, &data, &mut truncated),
+            Some(ChannelMsg::ExitStatus { exit_status }) => code = Some(exit_status),
+            Some(ChannelMsg::Close) | None => break,
+            _ => {}
+        }
+    }
+    Ok(ExecOut { stdout: String::from_utf8_lossy(&out).into_owned(), stderr: String::from_utf8_lossy(&err).into_owned(), code, truncated })
+}
+
 pub async fn run(p: &Profile, params: Params, em: Emitter, mut rx: UnboundedReceiver<Ctl>) -> Result<()> {
     let port = if p.port == 0 { 22 } else { p.port };
     let remote = RemoteMap::default();
@@ -196,6 +277,7 @@ pub async fn run(p: &Profile, params: Params, em: Emitter, mut rx: UnboundedRece
     em.status("connected", &format!("Connected to {}:{port}", p.host));
 
     let session = Arc::new(session);
+    let _exec = ExecRegistration::new(&params.sid, &session);
     let (_tunnels, report) = tunnel::start(&session, &p.forwards, &remote).await;
     if !report.is_empty() {
         let items: Vec<_> = report.iter().map(|s| json!({ "label": s.label, "error": s.error })).collect();
@@ -250,6 +332,66 @@ pub async fn run_sftp(p: &Profile, params: Params, em: Emitter, rx: UnboundedRec
     res
 }
 
+/// Logs in like `run`, but instead of a shell offers a local SOCKS5 proxy that dials through this
+/// server. The API client sends requests through it to reach hosts only the server can see.
+/// Reports `{"port": n}` as a `proxy` status once ready, then runs until closed or the link dies.
+pub async fn run_proxy(p: &Profile, params: Params, em: Emitter, mut rx: UnboundedReceiver<Ctl>) -> Result<()> {
+    let remote = RemoteMap::default();
+    let mut hops: Vec<Hop> = Vec::new();
+    let mut session = dial(p, &params, &em, &remote, &mut hops, &mut vec![p.id.clone()]).await?;
+    authenticate(&mut session, p, &params).await?;
+    let session = Arc::new(session);
+
+    let (port, listener) = tunnel::socks_proxy(session.clone()).await.context("could not open a local proxy port")?;
+    em.status_json("proxy", json!({ "port": port }));
+    let res = loop {
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(Ctl::Close) | None => break Ok(()),
+                Some(_) => {}
+            },
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                if session.is_closed() { break Err(ConnectionLost.into()); }
+            }
+        }
+    };
+    listener.abort();
+    let _ = session.disconnect(Disconnect::ByApplication, "", "en").await;
+    for hop in hops.iter().rev() {
+        let _ = hop.disconnect(Disconnect::ByApplication, "", "en").await;
+    }
+    res
+}
+
+/// How long a key check may take, counting the connection and every jump host before it.
+const CHECK_SECS: u64 = 30;
+
+/// Signs in to `p`'s server with `key_id` alone (never the profile's password), then disconnects: does the server
+/// accept this key? Nobody is watching, so a host key that isn't pinned yet is refused rather than asked about.
+/// Jump hosts sign in with their own saved credentials, as they do for a session.
+pub async fn check_key(p: &Profile, key_id: &str) -> Result<()> {
+    let mut p = p.clone();
+    p.auth_method = AuthMethod::Key;
+    p.key_id = Some(key_id.to_string());
+    let params = Params { sid: "key-check".into(), sessions: Sessions::default(), pinned_hosts_only: true, ..Default::default() };
+    let attempt = async {
+        let (em, remote, mut hops) = (Emitter::sink(|_| {}), RemoteMap::default(), Vec::new());
+        let mut session = dial(&p, &params, &em, &remote, &mut hops, &mut vec![p.id.clone()]).await?;
+        let result = match key_auth(&mut session, &p, &params).await {
+            Ok(r) if r.success() => Ok(()),
+            Ok(_) => Err(anyhow!("the server did not accept the key")),
+            Err(e) if e.is::<NeedsInput>() => Err(anyhow!("this key is protected by a passphrase the vault doesn't have; save the passphrase with the key first")),
+            Err(e) => Err(e),
+        };
+        let _ = session.disconnect(Disconnect::ByApplication, "", "en").await;
+        for hop in hops.iter().rev() {
+            let _ = hop.disconnect(Disconnect::ByApplication, "", "en").await;
+        }
+        result
+    };
+    tokio::time::timeout(Duration::from_secs(CHECK_SECS), attempt).await.map_err(|_| anyhow!("the server did not answer within {CHECK_SECS} seconds"))?
+}
+
 async fn authenticate(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<()> {
     match p.auth_method {
         AuthMethod::Password => password_auth(s, p, params).await,
@@ -266,7 +408,7 @@ async fn authenticate(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> 
 
 async fn key_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<russh::client::AuthResult> {
     let key_id = p.key_id.as_deref().context("no key assigned to this profile")?;
-    let key = match keys::load(key_id, params.passphrase.as_deref()) {
+    let key = match keys::load(key_id, params.passphrase.as_ref().map(|s| s.as_str())) {
         Ok(k) => k,
         Err(_) if params.passphrase.is_none() && keys::needs_passphrase(key_id)? => {
             return Err(NeedsInput("passphrase").into());
@@ -279,7 +421,8 @@ async fn key_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Resu
 
 async fn password_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) -> Result<()> {
     let pw = saved_password(p, &params.password).ok_or(NeedsInput("password"))?;
-    if s.authenticate_password(&p.username, &pw).await?.success() {
+    // russh takes the password by value (and wipes its own copy once sent), so hand it a copy.
+    if s.authenticate_password(&p.username, pw.as_str()).await?.success() {
         return Ok(());
     }
     // Many servers expose passwords only through keyboard-interactive.
@@ -289,7 +432,7 @@ async fn password_auth(s: &mut Handle<Handler>, p: &Profile, params: &Params) ->
             KeyboardInteractiveAuthResponse::Success => return Ok(()),
             KeyboardInteractiveAuthResponse::Failure { .. } => break,
             KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                r = s.authenticate_keyboard_interactive_respond(prompts.iter().map(|_| pw.clone()).collect()).await?;
+                r = s.authenticate_keyboard_interactive_respond(prompts.iter().map(|_| pw.to_string()).collect()).await?;
             }
         }
     }
@@ -303,6 +446,78 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use tauri::ipc::{Channel, InvokeResponseBody};
 
+    #[test]
+    fn output_is_capped_and_flagged() {
+        let (mut buf, mut truncated) = (Vec::new(), false);
+        push_capped(&mut buf, &vec![b'a'; EXEC_MAX_OUT - 1], &mut truncated);
+        assert!(!truncated);
+        push_capped(&mut buf, b"bcd", &mut truncated);
+        assert!(truncated);
+        assert_eq!(buf.len(), EXEC_MAX_OUT);
+        assert_eq!(buf.last(), Some(&b'b'));
+        push_capped(&mut buf, b"x", &mut truncated);
+        assert_eq!(buf.len(), EXEC_MAX_OUT);
+    }
+
+    #[tokio::test]
+    async fn exec_needs_an_open_session() {
+        let err = exec("no-such-session", "true", None, 5).await.unwrap_err();
+        assert!(err.to_string().contains("not connected"), "got: {err:#}");
+    }
+
+    /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER, PORTIQUE_TEST_SSH_KEY.
+    /// Opens a shell session, runs commands beside it, and checks the connection is released on close.
+    #[tokio::test]
+    #[ignore]
+    async fn exec_beside_a_shell_against_local_sshd() {
+        let env = |k: &str| std::env::var(k).unwrap();
+        let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let key = keys::import("test", &pem, None).unwrap();
+        let p = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
+            auth_method: AuthMethod::Key, key_id: Some(key.id.clone()), ..Default::default()
+        };
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "ex".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move {
+            for _ in 0..50 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                sessions.answer_host("ex", true);
+            }
+        });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn({ let em = Emitter::new(Channel::new(|_| Ok(()))); async move { run(&p, params, em, rx).await } });
+        for _ in 0..50 {
+            if EXEC.lock().unwrap().contains_key("ex") { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let r = exec("ex", "echo out-$((6*7)); echo oops >&2; exit 3", None, 10).await.unwrap();
+        assert_eq!((r.stdout.as_str(), r.stderr.as_str(), r.code, r.truncated), ("out-42\n", "oops\n", Some(3), false));
+        // Two at once, on the same connection.
+        let (a, b) = tokio::join!(exec("ex", "sleep 1; echo a", None, 10), exec("ex", "echo b", None, 10));
+        assert_eq!((a.unwrap().stdout, b.unwrap().stdout), ("a\n".to_string(), "b\n".to_string()));
+        // A command that outlives its time is stopped, and the connection still works afterwards.
+        let started = std::time::Instant::now();
+        let err = exec("ex", "sleep 30", None, 1).await.unwrap_err();
+        assert!(err.to_string().contains("longer than 1 seconds"), "got: {err:#}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(exec("ex", "echo still-here", None, 10).await.unwrap().stdout, "still-here\n");
+        // A script on stdin runs under sh, whatever the login shell is, and its exit status comes back.
+        let r = exec("ex", "sh", Some("echo from-stdin-$((1+2))\nexit 4\n"), 10).await.unwrap();
+        assert_eq!((r.stdout.as_str(), r.code), ("from-stdin-3\n", Some(4)));
+        // More output than the cap is cut off and flagged.
+        let big = exec("ex", "head -c 2000000 /dev/zero | tr '\\0' x", None, 20).await.unwrap();
+        assert!(big.truncated && big.stdout.len() == EXEC_MAX_OUT);
+
+        tx.send(Ctl::Close).unwrap();
+        task.await.unwrap().unwrap();
+        assert!(!EXEC.lock().unwrap().contains_key("ex"));
+        assert!(exec("ex", "true", None, 5).await.is_err());
+        keys::delete(&key.id).unwrap();
+    }
+
     /// Needs two running sshd instances (jump + target): set PORTIQUE_TEST_SSH_PORT (target),
     /// PORTIQUE_TEST_JUMP_PORT, PORTIQUE_TEST_SSH_USER, PORTIQUE_TEST_SSH_KEY. Run with XDG_CONFIG_HOME
     /// pointing at a scratch directory: it writes profiles, keys and a vault there.
@@ -314,7 +529,7 @@ mod tests {
         let env = |k: &str| std::env::var(k).unwrap();
         let (port, jump_port): (u16, u16) = (env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), env("PORTIQUE_TEST_JUMP_PORT").parse().unwrap());
         let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let key = keys::import("test", &pem, None).unwrap();
 
         // A TCP echo server standing in for "the service behind the server".
@@ -402,7 +617,7 @@ mod tests {
     async fn dropped_connection_is_reported_as_lost() {
         let env = |k: &str| std::env::var(k).unwrap();
         let pem = std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let key = keys::import("test", &pem, None).unwrap();
         let p = Profile {
             host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
@@ -433,6 +648,140 @@ mod tests {
         keys::delete(&key.id).unwrap();
     }
 
+    /// Key sign-in from start to finish, as the palette tool does it. Needs a running sshd that reads authorized keys from
+    /// `$PORTIQUE_TEST_FAKE_HOME/.ssh/authorized_keys`, with the key in PORTIQUE_TEST_SSH_KEY authorized there to begin with,
+    /// plus PORTIQUE_TEST_SSH_PORT and PORTIQUE_TEST_SSH_USER. PORTIQUE_TEST_INSTALL_SCRIPT is the interface's own install
+    /// script, made for the public key `PLACEHOLDER_KEY` below; the test swaps in the new key's real data and runs it
+    /// over an open session. Then it checks the key, the way the profile switch is gated.
+    #[tokio::test]
+    #[ignore]
+    async fn key_sign_in_from_start_to_finish_against_local_sshd() {
+        const PLACEHOLDER_KEY: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIPLACEHOLDERPLACEHOLDERPLACEHOLDERPLACEHOLDER00";
+        let env = |k: &str| std::env::var(k).unwrap();
+        let (home, template) = (env("PORTIQUE_TEST_FAKE_HOME"), std::fs::read_to_string(env("PORTIQUE_TEST_INSTALL_SCRIPT")).unwrap());
+        assert!(template.contains(PLACEHOLDER_KEY));
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let boot = keys::import("bootstrap", &std::fs::read_to_string(env("PORTIQUE_TEST_SSH_KEY")).unwrap(), None).unwrap();
+        let base = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"), ..Default::default()
+        };
+
+        // The person is connected already, with whatever they had before: here a bootstrap key.
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "e2e".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move { for _ in 0..50 { tokio::time::sleep(Duration::from_millis(100)).await; sessions.answer_host("e2e", true); } });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let open = Profile { auth_method: AuthMethod::Key, key_id: Some(boot.id.clone()), ..base.clone() };
+        let task = tokio::spawn({ let em = Emitter::new(Channel::new(|_| Ok(()))); async move { run(&open, params, em, rx).await } });
+        for _ in 0..50 {
+            if EXEC.lock().unwrap().contains_key("e2e") { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Step 1 and 2: a new key, and its public half on the server by the interface's own script.
+        let info = keys::generate("e2e-key").unwrap();
+        let public = keys::public(&info.id).unwrap();
+        let data = public.key.split(' ').nth(1).unwrap();
+        let script = template.replace(PLACEHOLDER_KEY, data);
+        let command = format!("env HOME={home} sh");
+        let r = exec("e2e", &command, Some(&script), 30).await.unwrap();
+        assert!(r.stdout.contains("@@result\nadded\n"), "stdout: {} stderr: {}", r.stdout, r.stderr);
+        let file = std::fs::read_to_string(format!("{home}/.ssh/authorized_keys")).unwrap();
+        assert!(file.contains(&format!("{} portique:e2e-key", public.key)), "file: {file}");
+        assert!(file.lines().count() >= 2, "the key that was there must still be there: {file}");
+
+        // Step 3: the check signs in with the new key alone. The profile's own method is a password that isn't saved.
+        let p = Profile { auth_method: AuthMethod::Password, ..base.clone() };
+        check_key(&p, &info.id).await.expect("the new key must sign in");
+        assert!(check_key(&p, &boot.id).await.is_ok(), "the bootstrap key is still accepted too");
+
+        // Running it again changes nothing.
+        let again = exec("e2e", &command, Some(&script), 30).await.unwrap();
+        assert!(again.stdout.contains("@@result\nalready\n"), "stdout: {}", again.stdout);
+        assert_eq!(std::fs::read_to_string(format!("{home}/.ssh/authorized_keys")).unwrap(), file);
+
+        tx.send(Ctl::Close).unwrap();
+        task.await.unwrap().unwrap();
+        keys::delete(&info.id).unwrap();
+        keys::delete(&boot.id).unwrap();
+    }
+
+    /// Same setup as above. Checks a key against a server before and after the server is told about it.
+    #[tokio::test]
+    #[ignore]
+    async fn check_key_tells_a_key_the_server_accepts_from_one_it_does_not() {
+        let env = |k: &str| std::env::var(k).unwrap();
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let info = keys::generate("checked").unwrap();
+        std::fs::write(env("PORTIQUE_TEST_SSH_AUTHORIZED"), "").unwrap();
+        let p = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
+            auth_method: AuthMethod::Password, ..Default::default()
+        };
+
+        // Nobody has trusted this server yet, and a check has nobody to ask: it refuses at once.
+        let err = check_key(&p, &info.id).await.unwrap_err();
+        assert!(err.to_string().contains("trusted yet"), "got: {err:#}");
+
+        // Connecting once and accepting the host key pins it (the key itself is not authorized, so sign-in fails).
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "t".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move { for _ in 0..30 { tokio::time::sleep(Duration::from_millis(100)).await; sessions.answer_host("t", true); } });
+        let pk = Profile { auth_method: AuthMethod::Key, key_id: Some(info.id.clone()), ..p.clone() };
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        run(&pk, params, Emitter::new(Channel::new(|_| Ok(()))), rx).await.unwrap_err();
+
+        // The profile's own method is password, with none saved; the check must use the key alone and say it was refused.
+        let err = check_key(&p, &info.id).await.unwrap_err();
+        assert!(err.to_string().contains("did not accept the key"), "got: {err:#}");
+
+        let public = keys::public(&info.id).unwrap();
+        std::fs::write(env("PORTIQUE_TEST_SSH_AUTHORIZED"), format!("{} portique:checked\n", public.key)).unwrap();
+        check_key(&p, &info.id).await.expect("the server has the key now");
+
+        assert!(check_key(&p, "no-such-key").await.is_err());
+        let wrong = keys::generate("other").unwrap();
+        assert!(check_key(&p, &wrong.id).await.is_err(), "a key the server doesn't have must not pass");
+        keys::delete(&info.id).unwrap();
+        keys::delete(&wrong.id).unwrap();
+    }
+
+    /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER and PORTIQUE_TEST_SSH_AUTHORIZED, the
+    /// file that sshd reads as its `AuthorizedKeysFile`. Point XDG_CONFIG_HOME and XDG_DATA_HOME at a scratch folder.
+    /// Makes a key in the vault, authorizes only its public half, and signs in with it.
+    #[tokio::test]
+    #[ignore]
+    async fn a_generated_key_signs_in_to_local_sshd() {
+        let env = |k: &str| std::env::var(k).unwrap();
+        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        let info = keys::generate("generated").unwrap();
+        assert!(keys::generate("GENERATED").is_err(), "a second key may not reuse a name");
+        let public = keys::public(&info.id).unwrap();
+        std::fs::write(env("PORTIQUE_TEST_SSH_AUTHORIZED"), format!("{} portique:generated\n", public.key)).unwrap();
+
+        let p = Profile {
+            host: "127.0.0.1".into(), port: env("PORTIQUE_TEST_SSH_PORT").parse().unwrap(), username: env("PORTIQUE_TEST_SSH_USER"),
+            auth_method: AuthMethod::Key, key_id: Some(info.id.clone()), ..Default::default()
+        };
+        let out = Arc::new(StdMutex::new(Vec::<u8>::new()));
+        let sink = out.clone();
+        let em = Emitter::new(Channel::new(move |b: InvokeResponseBody| {
+            if let InvokeResponseBody::Raw(v) = b { if v[0] == 0 { sink.lock().unwrap().extend_from_slice(&v[1..]); } }
+            Ok(())
+        }));
+        let sessions = Sessions::default();
+        let params = Params { cols: 80, rows: 24, sid: "t".into(), sessions: sessions.clone(), ..Default::default() };
+        tokio::spawn(async move { for _ in 0..50 { tokio::time::sleep(Duration::from_millis(100)).await; sessions.answer_host("t", true); } });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(async move { run(&p, params, em, rx).await });
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        tx.send(Ctl::Input(b"echo generated-$((6*7))\nexit\n".to_vec())).unwrap();
+        task.await.unwrap().unwrap();
+        let text = String::from_utf8_lossy(&out.lock().unwrap()).to_string();
+        assert!(text.contains("generated-42"), "output was: {text}");
+        keys::delete(&info.id).unwrap();
+    }
+
     /// Needs a running sshd: set PORTIQUE_TEST_SSH_PORT, PORTIQUE_TEST_SSH_USER, PORTIQUE_TEST_SSH_KEY.
     #[tokio::test]
     #[ignore]
@@ -440,7 +789,7 @@ mod tests {
         let port: u16 = std::env::var("PORTIQUE_TEST_SSH_PORT").unwrap().parse().unwrap();
         let user = std::env::var("PORTIQUE_TEST_SSH_USER").unwrap();
         let pem = std::fs::read_to_string(std::env::var("PORTIQUE_TEST_SSH_KEY").unwrap()).unwrap();
-        crate::vault::global().create("integration-test-pass", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        crate::vault::global().create("pylon-quartz-marmot-velvet-9", crate::vault::Kdf { m: 64, t: 1, p: 1 }).unwrap();
         let info = keys::import("test", &pem, None).unwrap();
 
         let out = Arc::new(StdMutex::new(Vec::<u8>::new()));

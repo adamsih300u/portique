@@ -67,6 +67,25 @@ where
     (tunnels, report)
 }
 
+/// A SOCKS5 proxy on an ephemeral local port that dials through the SSH server (like `-D 0`).
+/// Returns the port; the proxy lives until the returned handle is aborted.
+pub async fn socks_proxy<H>(handle: Arc<Handle<H>>) -> std::io::Result<(u16, JoinHandle<()>)>
+where
+    H: Handler + Send + 'static,
+{
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+    let port = listener.local_addr()?.port();
+    let task = tokio::spawn(async move {
+        while let Ok((sock, peer)) = listener.accept().await {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                let _ = socks(&handle, sock, peer).await;
+            });
+        }
+    });
+    Ok((port, task))
+}
+
 async fn listen<H>(handle: Arc<Handle<H>>, f: &Forward) -> Result<JoinHandle<()>, String>
 where
     H: Handler + Send + 'static,

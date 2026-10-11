@@ -170,7 +170,7 @@ impl Telnet {
         for &b in input {
             match b {
                 IAC => v.extend([IAC, IAC]),
-                b'\r' => v.extend([b'\r', b'\n']),
+                b'\r' => v.extend(b"\r\n"),
                 _ => v.push(b),
             }
         }

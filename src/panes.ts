@@ -1,6 +1,7 @@
-import { Profile } from "./api";
-import { TabState, TerminalTab } from "./terminal-tab";
-import { ensureFont, getTheme } from "./themes";
+import { controllerBadge } from "./agent-core";
+import { type Profile } from "./api";
+import { type TabState, TerminalTab } from "./terminal-tab";
+import { effectiveFont, ensureFont, getTheme } from "./themes";
 import { h } from "./ui";
 
 /** "row": panes side by side (split right). "col": panes stacked (split down). */
@@ -8,7 +9,10 @@ export type Dir = "row" | "col";
 export type Arrow = "left" | "right" | "up" | "down";
 
 /** Serialisable pane tree: a profile id, or two children and how they divide the space. */
-export type Layout = { p: string } | { d: Dir; r: number; a: Layout; b: Layout };
+export type Layout = ({ p: string } | { d: Dir; r: number; a: Layout; b: Layout }) & {
+  /** Custom tab name; only ever set on a tab's root node. */
+  n?: string;
+};
 
 class Leaf {
   readonly el = h("div", { class: "pane" });
@@ -43,10 +47,17 @@ export class Tab {
   private readonly label = h("span", { class: "tlabel" });
   private readonly extra = h("span", { class: "tbadge" });
   readonly closeBtn = h("button", { class: "mini", title: "Close tab" }, "✕");
+  private shown = false;
   private root!: Node;
   private focusedLeaf!: Leaf;
   /** Layout, focus or session state changed (used for persistence). */
   onChange: () => void = () => {};
+  /** The focused pane (and so possibly the tab's name) changed. */
+  onRetitle: () => void = () => {};
+  /** Name chosen by the user; null means "use the profile name". */
+  customName: string | null = null;
+  /** 1-based position among open tabs of the same profile, or 0 when it is the only one. */
+  private ordinal = 0;
   /** Shift+right-click inside a pane. */
   onPaneMenu: (e: MouseEvent) => void = () => {};
 
@@ -57,6 +68,7 @@ export class Tab {
   /** Builds a tab from a layout; profiles that no longer exist are dropped. Null if none survive. */
   static create(layout: Layout, find: (id: string) => Profile | undefined): Tab | null {
     const tab = new Tab();
+    tab.customName = typeof layout.n === "string" && layout.n.trim() ? layout.n.trim() : null;
     const root = tab.build(layout, find);
     if (!root) return null;
     tab.root = root;
@@ -67,12 +79,38 @@ export class Tab {
     return tab;
   }
 
+  /** A tab for a session an agent opened: it shows that session instead of connecting a new one. */
+  static createForAgent(profile: Profile, session: string, client: string): Tab {
+    const tab = new Tab();
+    const leaf = tab.makeLeaf(profile, { session, client });
+    tab.root = leaf;
+    tab.focusedLeaf = leaf;
+    leaf.el.classList.add("focused");
+    tab.el.append(leaf.el);
+    tab.render();
+    return tab;
+  }
+
   get focused(): TerminalTab {
     return this.focusedLeaf.term;
   }
+  /** Some pane shows a session an agent opened. Such a tab is not saved with the layout: its session ends with the app. */
+  get hasAgent(): boolean {
+    return leavesOf(this.root).some((l) => l.term.agentSession !== null);
+  }
   /** Name shown in the tab bar and the command palette. */
   get title(): string {
-    return this.focused.profile.name;
+    return this.customName ?? (this.ordinal ? `${this.focused.profile.name} ${this.ordinal}` : this.focused.profile.name);
+  }
+  setOrdinal(n: number) {
+    if (n === this.ordinal) return;
+    this.ordinal = n;
+    this.render();
+  }
+  rename(name: string | null) {
+    this.customName = name;
+    this.render();
+    this.onChange();
   }
   get paneCount(): number {
     return leavesOf(this.root).length;
@@ -95,17 +133,20 @@ export class Tab {
     return sp;
   }
 
-  private makeLeaf(p: Profile): Leaf {
+  private makeLeaf(p: Profile, agent?: { session: string; client: string }): Leaf {
     const term = new TerminalTab(p);
+    if (agent) term.showAgentSession(agent.session, agent.client);
     const leaf = new Leaf(term);
     term.onState = () => this.render();
+    term.onController = () => this.render();
+    term.onSettled = () => this.flag();
     term.onTunnels = () => this.render();
     term.onFocus = () => this.focus(leaf, false);
     term.onMenu = (e) => {
       this.focus(leaf);
       this.onPaneMenu(e);
     };
-    void ensureFont(p.appearance.fontFamily, p.appearance.fontSize).then(() => {
+    void ensureFont(effectiveFont(p.appearance), p.appearance.fontSize).then(() => {
       if (term.disposed) return; // closed while the font loaded
       term.mount(leaf.el);
       return term.connect();
@@ -195,6 +236,7 @@ export class Tab {
     for (const l of leavesOf(this.root)) l.el.classList.toggle("focused", l === leaf);
     if (grab) leaf.term.focus();
     this.render();
+    this.onRetitle();
   }
 
   /** Moves focus to the neighbouring pane in a direction (by on-screen geometry). */
@@ -217,7 +259,9 @@ export class Tab {
   layout(): Layout {
     const walk = (n: Node): Layout =>
       n instanceof Leaf ? { p: n.term.profile.id } : { d: n.dir, r: Math.round(n.ratio * 1000) / 1000, a: walk(n.a), b: walk(n.b) };
-    return walk(this.root);
+    const out = walk(this.root);
+    if (this.customName) out.n = this.customName;
+    return out;
   }
 
   /** Re-apply a profile after it was edited, in every pane that uses it. */
@@ -230,9 +274,16 @@ export class Tab {
     return leavesOf(this.root).some((l) => l.term.profile.id === id);
   }
 
+  /** Marks the tab as having something new, unless it is already in front of the user. */
+  private flag() {
+    if (!this.shown || !document.hasFocus()) this.header.classList.add("unread");
+  }
+
   show(on: boolean) {
+    this.shown = on;
     this.el.style.display = on ? "" : "none";
     this.header.classList.toggle("active", on);
+    if (on) this.header.classList.remove("unread");
     this.header.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     if (on) {
       this.refit();
@@ -264,10 +315,13 @@ export class Tab {
     this.header.style.setProperty("--tab-accent", th.ansi[4]);
     this.status.className = `status ${t.state}`;
     this.status.title = STATE_TIPS[t.state];
-    this.label.textContent = t.profile.name;
+    this.label.textContent = this.title;
+    this.header.title = this.customName ? `${t.profile.name} (renamed)` : "";
     const n = this.paneCount;
     const tunnels = leavesOf(this.root).flatMap((l) => l.term.tunnels);
+    const badge = t.agentSession ? controllerBadge(t.controller, t.agentName) : null;
     this.extra.replaceChildren(
+      ...(badge ? [h("span", { class: `agent-badge ${t.controller === "user" ? "you" : ""}`, title: badge.tip }, badge.text)] : []),
       ...(n > 1 ? [h("span", { title: `${n} panes` }, `⊞${n}`)] : []),
       ...(tunnels.length
         ? [h("span", { class: tunnels.some((x) => x.error) ? "warn" : "", title: tunnels.map((x) => `${x.error ? "✕" : "✓"} ${x.label}${x.error ? ` (${x.error})` : ""}`).join("\n") }, `⇄${tunnels.length}`)]

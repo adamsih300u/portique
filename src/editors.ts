@@ -1,15 +1,19 @@
-import { api, Forward, KeyInfo, newProfile, Profile, Theme } from "./api";
-import { allThemes, getTheme, isBuiltin, loadThemes } from "./themes";
+import { api, type Forward, type KeyInfo, newProfile, type Profile, type Protocol, type Theme } from "./api";
+import { type SavedCommand, sanitizeCommands } from "./saved-commands";
+import { apiConnectionForm } from "./api-connection";
+import { allThemes, DEFAULT_FONT, effectiveFont, getTheme, isBuiltin, loadThemes } from "./themes";
 
-const DEFAULT_FONT = "Cascadia Mono, Consolas, 'DejaVu Sans Mono', monospace";
+import { copyInstallCommand, copyPublicKey, keyProblem, publicKeyDialog, savePublicKey } from "./key-public";
+import { contextMenu } from "./menu";
 import { field, h, modal } from "./ui";
 
 const FONTS = [
   "Cascadia Mono", "Cascadia Code", "Consolas", "Fira Code", "JetBrains Mono", "Source Code Pro",
-  "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Hack", "Courier New", "monospace",
+  "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Hack", "IBM Plex Mono", "Inconsolata", "Iosevka",
+  "Roboto Mono", "Noto Sans Mono", "Geist Mono", "Intel One Mono", "Courier New", "monospace",
 ];
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
-const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0 };
+const DEFAULT_PORT = { ssh: 22, telnet: 23, serial: 0, api: 0, local: 0 };
 
 const opt = (value: string | number, label: string, selected: boolean) =>
   h("option", { value: String(value), selected }, label);
@@ -19,23 +23,43 @@ const select = (items: [string | number, string][], current: string | number) =>
 
 // ---------------------------------------------------------------- profile editor
 
-/** Opens the profile editor. Resolves with the saved profile, or null if cancelled. */
-export async function editProfile(existing: Profile | null): Promise<Profile | null> {
-  const p: Profile = structuredClone(existing ?? newProfile());
-  const hadPassword = p.id ? await api.hasPassword(p.id).catch(() => false) : false;
+export interface EditOptions {
+  /** Pre-fills a new profile from this one (a duplicate). Its saved password is copied unless the box is ticked. */
+  template?: Profile;
+  /** Name to start with. Defaults to the template's name, or empty. */
+  name?: string;
+  /** Runs after each profile is saved, so the caller can refresh while "Create + Add Another" keeps the editor going. */
+  onSaved?: (saved: Profile) => void | Promise<void>;
+}
+
+/**
+ * Opens the profile editor. Resolves with the last profile saved, or null if none was.
+ * `protocol` preselects the kind for a new one. A new profile also offers "Create + Add Another",
+ * which saves it and reopens the editor filled from it, with the name cleared.
+ */
+export async function editProfile(existing: Profile | null, protocol?: Protocol, opts: EditOptions = {}): Promise<Profile | null> {
+  const template = existing ? undefined : opts.template;
+  const p: Profile = structuredClone(existing ?? template ?? newProfile());
+  if (template) p.id = "";
+  if (!existing && protocol) p.protocol = protocol;
+  if (!existing && opts.name !== undefined) p.name = opts.name;
+  const passwordOf = (existing ?? template)?.id;
+  const hadPassword = passwordOf ? await api.hasPassword(passwordOf).catch(() => false) : false;
   const keys = await api.listKeys();
   await loadThemes();
 
   const name = h("input", { value: p.name, placeholder: "e.g. core-switch-1" });
   const group = h("input", { value: p.group, placeholder: "e.g. Work, Home", list: "groups" });
-  const proto = select([["ssh", "SSH"], ["telnet", "Telnet"], ["serial", "Serial"]], p.protocol);
+  const proto = select([["ssh", "SSH"], ["telnet", "Telnet"], ["serial", "Serial"], ["api", "API"]], p.protocol);
   const host = h("input", { value: p.host, placeholder: "hostname or IP" });
   const port = h("input", { type: "number", value: String(p.port), min: "1", max: "65535" });
   const user = h("input", { value: p.username, autocomplete: "off" });
   const pass = h("input", {
     type: "password",
     autocomplete: "new-password",
-    placeholder: hadPassword ? "•••••• (saved — leave blank to keep)" : "not saved",
+    placeholder: !hadPassword ? "not saved"
+      : template ? `•••••• (saved on ${template.name || "the original"} — leave blank to copy it)`
+      : "•••••• (saved — leave blank to keep)",
   });
   const clearPass = h("input", { type: "checkbox" });
   const authSel = select(
@@ -108,6 +132,31 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
     field("Start in this folder on the server", remoteDir),
     h("p", { class: "muted" }, "Leave blank to use the default from Settings, and the login folder on the server."));
 
+  // saved commands (terminals)
+  const cmds: SavedCommand[] = structuredClone(sanitizeCommands(p.commands));
+  const cmdRows = h("div", { class: "cmds" });
+  const cmdTitle = h("span", {});
+  const renderCmds = () => {
+    cmdTitle.textContent = cmds.length ? `Saved commands (${cmds.length})` : "Saved commands";
+    cmdRows.replaceChildren(...cmds.map((c) => {
+      const cname = h("input", { value: c.name, placeholder: "Name", spellcheck: false });
+      const text = h("input", { value: c.text, placeholder: "Command, e.g. docker ps  (use {{name}} to ask for a value)", spellcheck: false });
+      const mode = select([["run", "Run"], ["paste", "Type only"]], c.mode);
+      mode.title = "Run presses Enter for you; Type only leaves the command on the line to read or edit first";
+      cname.addEventListener("input", () => { c.name = cname.value; });
+      text.addEventListener("input", () => { c.text = text.value; });
+      mode.addEventListener("change", () => { c.mode = mode.value as SavedCommand["mode"]; });
+      return h("div", { class: "cmd" }, cname, text, mode,
+        h("button", { type: "button", class: "mini", title: "Remove", onclick: () => { cmds.splice(cmds.indexOf(c), 1); renderCmds(); } }, "✕"));
+    }));
+  };
+  renderCmds();
+  const cmdSection = h("details", { class: "fwd-section", open: cmds.length > 0 },
+    h("summary", {}, cmdTitle),
+    cmdRows,
+    h("button", { type: "button", onclick: () => { cmds.push({ id: crypto.randomUUID(), name: "", text: "", mode: "run" }); renderCmds(); } }, "+ Add command"),
+    h("p", { class: "muted" }, "Offered in the command palette (Ctrl+Shift+P) while a tab for this profile is on screen. Stored as plain text, so keep passwords and keys out of them."));
+
   // serial
   const s = p.serial;
   const serialPort = h("input", { value: s.port, list: "serial-ports", placeholder: "COM3 or /dev/ttyUSB0" });
@@ -124,102 +173,71 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
   const stopBits = select([[1, "1"], [2, "2"]], s.stopBits);
   const flow = select([["none", "None"], ["software", "XON/XOFF"], ["hardware", "RTS/CTS"]], s.flow);
 
-  // appearance
-  const a = p.appearance;
-  const themeSel = h("select", {});
-  const fillThemes = (sel: string) =>
-    themeSel.replaceChildren(...allThemes().map((t) => opt(t.id, t.name, t.id === sel)));
-  fillThemes(a.themeId);
-  const editThemes = h("button", { type: "button", onclick: async () => {
-    const chosen = await themeDialog(themeSel.value);
-    fillThemes(chosen ?? themeSel.value);
-    themeSel.dispatchEvent(new Event("change"));
-    renderPreview();
-  } }, "Edit themes…");
-  const font = h("input", { value: a.fontFamily, list: "fonts" });
-  const fonts = h("datalist", { id: "fonts" }, ...FONTS.map((f) => h("option", { value: f })));
-  const size = h("input", { type: "number", value: String(a.fontSize), min: "6", max: "48", step: "0.5" });
-  const cursor = select([["block", "Block"], ["underline", "Underline"], ["bar", "Bar"]], a.cursorStyle);
-  const blink = h("input", { type: "checkbox", checked: a.cursorBlink });
-  const ligatures = h("input", { type: "checkbox", checked: a.ligatures });
+  const look = appearanceForm(p.appearance, () => host.value || "host");
+  host.addEventListener("input", look.refresh);
   const autoReconnect = h("input", { type: "checkbox", checked: p.autoReconnect });
-  const scrollback = h("input", { type: "number", value: String(a.scrollback), min: "0", step: "1000" });
-  const preview = h("pre", { class: "preview" });
-  const renderPreview = () => {
-    const t = getTheme(themeSel.value);
-    preview.style.background = t.background;
-    preview.style.color = t.foreground;
-    preview.style.fontFamily = font.value;
-    preview.style.fontSize = `${Number(size.value) || 14}px`;
-    const col = (text: string, color: string) => h("span", { style: `color:${color}` }, text);
-    preview.replaceChildren(
-      `user@${host.value || "host"}:~$ ls -la\n`,
-      col("drwxr-xr-x", t.ansi[4]), " ", col("config", t.ansi[2]), " ", col("error.log", t.ansi[1]), " ", col("notes.txt", t.ansi[3]), "\n",
-      ...t.ansi.map((c) => h("span", { style: `background:${c}` }, "  ")),
-    );
-  };
-  [themeSel, font, size, host].forEach((e) => e.addEventListener("input", renderPreview));
-  // A theme can carry a font (e.g. SGI's screen font); picking it applies the font too.
-  let prevThemeId = themeSel.value;
-  themeSel.addEventListener("change", () => {
-    const next = getTheme(themeSel.value);
-    const prev = getTheme(prevThemeId);
-    if (next.fontFamily) {
-      font.value = next.fontFamily;
-      if (next.fontSize) size.value = String(next.fontSize);
-    } else if (prev.fontFamily && font.value === prev.fontFamily) {
-      font.value = DEFAULT_FONT; // leaving a font-bearing theme: go back to the default font
-      size.value = "14";
-    }
-    prevThemeId = themeSel.value;
-  });
-  renderPreview();
 
   const forgetHost = h("button", { type: "button", onclick: async () => {
     await api.forgetHost(host.value, Number(port.value) || 22);
     forgetHost.textContent = "Forgotten";
   } }, "Forget saved host key");
 
+  // API connection (an HTTP endpoint with saved requests)
+  const apiForm = apiConnectionForm(p.api, allProfiles.filter((x) => x.protocol === "ssh" && x.id !== p.id).sort((a, b) => a.name.localeCompare(b.name)));
+  const apiSection = h("div", {}, apiForm.el);
+
   const netSection = h("div", { class: "grid" });
-  const sshSection = h("div", { class: "grid" });
   const serialSection = h("div", { class: "grid" });
   const credSection = h("div", { class: "grid" });
   const plainWarn = h("p", { class: "muted warn" },
     "Telnet and serial are not encrypted, and the saved password is typed automatically at the first password prompt after connecting (within 60 s). Only use this on trusted networks and devices.");
 
-  netSection.append(field("Host", host), field("Port", port));
-  sshSection.append(
-    field("Authentication", authSel),
-    field("Private key", h("div", { class: "row" }, keySel, manageKeys)),
-    h("label", { class: "check" }, autoReconnect, " Reconnect automatically if the connection drops"),
-    field("Jump host", jumpSel, "Connects through another SSH profile (like ProxyJump), using its saved login."),
-    field("Host key", forgetHost, "Host keys are pinned on first connect; clear it after a legitimate key change."),
-  );
+  // Connection: where to go. Login: who you are and how you prove it. Everything else is optional and folded away.
+  const jumpField = field("Jump host", jumpSel, "Connects through another SSH profile (like ProxyJump), using its saved login.");
+  const authField = field("Authentication", authSel);
+  const keyField = field("Private key", h("div", { class: "row" }, keySel, manageKeys));
+  const passField = field("Password", pass, "Kept in the encrypted vault, never in the profile file.");
+  const clearField = h("label", { class: "check" }, clearPass, template ? " Don't copy the saved password" : " Remove saved password");
+  netSection.append(field("Host", host), field("Port", port), jumpField);
   serialSection.append(
     field("Port", serialPort), field("Baud", baud), field("Data bits", dataBits),
     field("Parity", parity), field("Stop bits", stopBits), field("Flow control", flow), portList, bauds,
   );
-  credSection.append(
-    plainWarn,
-    field("Username", user),
-    field("Password", pass, "Kept in the encrypted vault, never in the profile file."),
-    h("label", { class: "check" }, clearPass, " Remove saved password"),
-  );
+  credSection.append(plainWarn, field("Username", user), authField, passField, keyField, clearField);
+
+  const sessionSection = h("details", { class: "fwd-section" },
+    h("summary", {}, "Reliability & security"),
+    h("label", { class: "check" }, autoReconnect, " Reconnect automatically if the connection drops"),
+    field("Host key", forgetHost, "Host keys are pinned on first connect; clear it after a legitimate key change."));
+  const groupSection = h("details", { class: "fwd-section", open: !!p.group },
+    h("summary", {}, "Sidebar group"),
+    field("Group", group, "Profiles with the same group are listed together in the sidebar."));
+
+  const loginBlock = h("div", {}, h("h3", {}, "Login"), credSection);
+  const appearanceBlock = h("div", {},
+    h("h3", {}, "Appearance"),
+    look.el);
 
   const sync = () => {
     const pr = proto.value as Profile["protocol"];
-    netSection.hidden = pr === "serial";
-    sshSection.hidden = pr !== "ssh";
+    netSection.hidden = pr === "serial" || pr === "api";
+    apiSection.hidden = pr !== "api";
+    loginBlock.hidden = pr === "api";
+    appearanceBlock.hidden = pr === "api";
+    jumpField.hidden = pr !== "ssh";
+    authField.hidden = pr !== "ssh";
+    sessionSection.hidden = pr !== "ssh";
     fwdSection.hidden = pr !== "ssh";
     filesSection.hidden = pr !== "ssh";
+    cmdSection.hidden = pr === "api";
     serialSection.hidden = pr !== "serial";
-    keySel.closest("label")!.hidden = pr !== "ssh" || authSel.value === "password";
+    keyField.hidden = pr !== "ssh" || authSel.value === "password";
     // Password applies to everything except pure key auth.
     const needsPw = pr !== "ssh" || authSel.value !== "key";
-    pass.closest("label")!.hidden = !needsPw;
-    clearPass.closest("label")!.hidden = !needsPw;
-    if (!p.id || Number(port.value) === DEFAULT_PORT[p.protocol]) port.value = String(DEFAULT_PORT[pr] || "");
-    plainWarn.hidden = pr === "ssh";
+    passField.hidden = !needsPw;
+    clearField.hidden = !needsPw;
+    if ((!p.id && !template) || Number(port.value) === DEFAULT_PORT[p.protocol]) port.value = String(DEFAULT_PORT[pr] || "");
+    plainWarn.hidden = pr === "ssh" || pr === "api";
     p.protocol = pr;
   };
   proto.addEventListener("change", sync);
@@ -229,61 +247,70 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
   const body = h(
     "div",
     { class: "editor" },
-    h("div", { class: "grid" }, field("Name", name), field("Group", group), field("Protocol", proto)),
+    h("div", { class: "grid" }, field("Name", name), field("Protocol", proto)),
     h("datalist", { id: "groups" }, ...[...new Set(allProfiles.map((x) => x.group).filter(Boolean))].map((g) => h("option", { value: g }))),
-    h("h3", {}, "Connection"), netSection, serialSection, sshSection, fwdSection, filesSection,
-    h("h3", {}, "Login"), credSection,
-    h("h3", {}, "Appearance"),
-    h("div", { class: "grid" },
-      field("Colour theme", h("div", { class: "row" }, themeSel, editThemes)),
-      field("Font", font), field("Font size", size), field("Cursor", cursor),
-      field("Scrollback (lines)", scrollback), h("label", { class: "check" }, blink, " Blinking cursor"),
-      h("label", { class: "check" }, ligatures, " Font ligatures (needs a font that has them)"), fonts),
-    preview,
+    h("h3", {}, "Connection"), netSection, serialSection, apiSection,
+    loginBlock,
+    h("h3", {}, "Options"), fwdSection, filesSection, cmdSection, sessionSection, groupSection,
+    appearanceBlock,
   );
 
-  let saved: Profile | null = null;
-  await modal(existing ? `Edit ${existing.name}` : "New profile", body, [
+  let saved = null as Profile | null;
+  const save = async () => {
+    if (!name.value.trim()) throw new Error("Name is required");
+    if (p.protocol !== "api" && (p.protocol === "serial" ? !serialPort.value.trim() : !host.value.trim()))
+      throw new Error(p.protocol === "serial" ? "Serial port is required" : "Host is required");
+    const problem = p.protocol === "api" ? apiForm.problem() : null;
+    if (problem) throw new Error(problem);
+    if (p.protocol === "ssh" && authSel.value !== "password" && !keySel.value)
+      throw new Error("Choose a private key (or import one with Manage keys)");
+    const live = p.protocol === "ssh" ? fwds.filter((f) => f.listenPort || f.destHost !== "localhost" || f.destPort) : [];
+    for (const f of live) {
+      if (!f.listenPort || f.listenPort > 65535) throw new Error("Each port forward needs a listening port (1-65535)");
+      if (f.kind !== "dynamic" && (!f.destHost || !f.destPort || f.destPort > 65535))
+        throw new Error("Each port forward needs a destination host and port");
+    }
+    Object.assign(p, {
+      jumpHost: p.protocol === "ssh" ? jumpSel.value || null : null,
+      autoReconnect: autoReconnect.checked,
+      forwards: live,
+      commands: p.protocol === "api" ? [] : sanitizeCommands(cmds),
+      localDir: p.protocol === "ssh" ? localDir.value.trim() : "",
+      remoteDir: p.protocol === "ssh" ? remoteDir.value.trim() : "",
+      name: name.value.trim(), group: group.value.trim(), host: p.protocol === "api" ? apiForm.read().baseUrl : host.value.trim(),
+      api: p.protocol === "api" ? apiForm.read() : p.api,
+      port: Number(port.value) || DEFAULT_PORT[p.protocol], username: user.value,
+      authMethod: authSel.value, keyId: keySel.value || null,
+    });
+    Object.assign(p.serial, {
+      port: serialPort.value.trim(), baud: Number(baud.value) || 9600, dataBits: Number(dataBits.value),
+      parity: parity.value, stopBits: Number(stopBits.value), flow: flow.value,
+    });
+    Object.assign(p.appearance, look.read());
+    const done = await api.saveProfile(p);
+    saved = done;
+    p.id = done.id; // a retry after a later step fails updates this profile instead of adding another
+    if (pass.value) await api.setPassword(done.id, pass.value);
+    else if (clearPass.checked) { if (!template) await api.setPassword(done.id, ""); }
+    else if (template && hadPassword && p.protocol !== "api" && (p.protocol !== "ssh" || p.authMethod !== "key"))
+      await api.copyPassword(template.id, done.id);
+    await opts.onSaved?.(done);
+  };
+  const title = existing ? `Edit ${existing.name}` : template && opts.name !== "" ? `Duplicate ${template.name}` : "New profile";
+  const shown = modal(title, body, existing ? [
     { label: "Cancel" },
-    {
-      label: "Save",
-      primary: true,
-      action: async () => {
-        if (!name.value.trim()) throw new Error("Name is required");
-        if (p.protocol === "serial" ? !serialPort.value.trim() : !host.value.trim())
-          throw new Error(p.protocol === "serial" ? "Serial port is required" : "Host is required");
-        if (p.protocol === "ssh" && authSel.value !== "password" && !keySel.value)
-          throw new Error("Choose a private key (or import one with Manage keys)");
-        const live = p.protocol === "ssh" ? fwds.filter((f) => f.listenPort || f.destHost !== "localhost" || f.destPort) : [];
-        for (const f of live) {
-          if (!f.listenPort || f.listenPort > 65535) throw new Error("Each port forward needs a listening port (1-65535)");
-          if (f.kind !== "dynamic" && (!f.destHost || !f.destPort || f.destPort > 65535))
-            throw new Error("Each port forward needs a destination host and port");
-        }
-        Object.assign(p, {
-          jumpHost: p.protocol === "ssh" ? jumpSel.value || null : null,
-          autoReconnect: autoReconnect.checked,
-          forwards: live,
-          localDir: p.protocol === "ssh" ? localDir.value.trim() : "",
-          remoteDir: p.protocol === "ssh" ? remoteDir.value.trim() : "",
-          name: name.value.trim(), group: group.value.trim(), host: host.value.trim(),
-          port: Number(port.value) || DEFAULT_PORT[p.protocol], username: user.value,
-          authMethod: authSel.value, keyId: keySel.value || null,
-        });
-        Object.assign(p.serial, {
-          port: serialPort.value.trim(), baud: Number(baud.value) || 9600, dataBits: Number(dataBits.value),
-          parity: parity.value, stopBits: Number(stopBits.value), flow: flow.value,
-        });
-        Object.assign(p.appearance, {
-          themeId: themeSel.value, fontFamily: font.value, fontSize: Number(size.value) || 14,
-          cursorStyle: cursor.value, cursorBlink: blink.checked, ligatures: ligatures.checked, scrollback: Number(scrollback.value) || 0,
-        });
-        saved = await api.saveProfile(p);
-        if (clearPass.checked) await api.setPassword(saved.id, "");
-        else if (pass.value) await api.setPassword(saved.id, pass.value);
-      },
-    },
+    { label: "Save", primary: true, action: save },
+  ] : [
+    { label: "Cancel" },
+    { label: "Create + Add Another", action: save },
+    { label: "Create", primary: true, action: save },
   ], true);
+  if (template && opts.name !== "") name.select(); // a duplicate's name is usually retyped
+  const pressed = await shown;
+  if (pressed === "Create + Add Another" && saved) {
+    // Same shape, blank name: the next profile is usually a small variation of this one.
+    return (await editProfile(null, undefined, { ...opts, template: saved, name: "" })) ?? saved;
+  }
   return saved;
 }
 
@@ -292,11 +319,27 @@ export async function editProfile(existing: Profile | null): Promise<Profile | n
 /** Key import/delete dialog. Resolves with the refreshed key list. */
 export async function manageKeysDialog(): Promise<KeyInfo[]> {
   const list = h("div", { class: "key-list" });
+  const attempt = async (what: () => Promise<unknown>) => {
+    try {
+      await what();
+    } catch (e) {
+      alert(keyProblem(e));
+    }
+  };
+  const keyMenu = (e: MouseEvent, k: KeyInfo) => {
+    e.preventDefault();
+    contextMenu(e.clientX, e.clientY, [
+      { label: "Show public key…", action: () => void attempt(() => publicKeyDialog(k)) },
+      { label: "Copy public key", action: () => void attempt(() => copyPublicKey(k)) },
+      { label: "Copy install command", action: () => void attempt(() => copyInstallCommand(k)) },
+      { label: "Save public key…", action: () => void attempt(() => savePublicKey(k)) },
+    ]);
+  };
   const render = async () => {
     const keys = await api.listKeys();
     list.replaceChildren(
       ...(keys.length ? keys : []).map((k) =>
-        h("div", { class: "key-row" },
+        h("div", { class: "key-row", oncontextmenu: (e: MouseEvent) => keyMenu(e, k) },
           h("div", {}, h("strong", {}, k.name), h("small", {}, ` ${k.algorithm}${k.encrypted ? " · passphrase-protected" : ""}`),
             h("div", { class: "mono small" }, k.fingerprint)),
           h("button", { onclick: async () => {
@@ -306,11 +349,23 @@ export async function manageKeysDialog(): Promise<KeyInfo[]> {
             }
           } }, "Delete")),
       ),
-      ...(keys.length ? [] : [h("p", { class: "muted" }, "No keys imported yet.")]),
+      ...(keys.length ? [h("p", { class: "muted" }, "Right-click a key to copy or save its public half, or to copy a command that installs it on a server.")] : [h("p", { class: "muted" }, "No keys yet. Generate one below, or import one you already have.")]),
     );
     return keys;
   };
   await render();
+
+  const gname = h("input", { placeholder: "Name for the new key, e.g. work-laptop" });
+  const generate = h("button", { class: "primary", onclick: async () => {
+    try {
+      const k = await api.generateKey(gname.value);
+      gname.value = "";
+      await render();
+      await publicKeyDialog(k);
+    } catch (e) {
+      alert(keyProblem(e));
+    }
+  } }, "Generate key");
 
   const kname = h("input", { placeholder: "Key name, e.g. work-laptop" });
   const file = h("input", { type: "file" });
@@ -334,10 +389,102 @@ export async function manageKeysDialog(): Promise<KeyInfo[]> {
     }
   } }, "Import key");
 
-  const body = h("div", {}, list, h("h3", {}, "Import a private key"), kname, file, pem, pp, importBtn,
+  const body = h("div", {}, list, h("h3", {}, "Generate a new key"), gname, generate,
+    h("p", { class: "muted" }, "Makes an Ed25519 key inside the vault. The private half never leaves it; Portique signs in with it for you, and you share only the public half."),
+    h("h3", {}, "Import a private key"), kname, file, pem, pp, importBtn,
     h("p", { class: "muted" }, "Keys and passphrases are stored inside the encrypted vault (vault.bin), never as plain files."));
   await modal("SSH keys", body, [{ label: "Close", primary: true }], true);
   return api.listKeys();
+}
+
+// ---------------------------------------------------------------- appearance
+
+type Look = Profile["appearance"];
+
+/**
+ * The look of a terminal: theme, font, size, cursor, scrollback, with a live preview. `hostName` is what the
+ * preview's prompt shows. Shared by the profile editor and the local terminals' own dialog.
+ */
+function appearanceForm(a: Look, hostName: () => string) {
+  const themeSel = h("select", {});
+  const fillThemes = (sel: string) =>
+    themeSel.replaceChildren(...allThemes().map((t) => opt(t.id, t.name, t.id === sel)));
+  fillThemes(a.themeId);
+  const editThemes = h("button", { type: "button", onclick: async () => {
+    const chosen = await themeDialog(themeSel.value);
+    fillThemes(chosen ?? themeSel.value);
+    themeSel.dispatchEvent(new Event("change"));
+    renderPreview();
+  } }, "Edit themes…");
+  const font = h("input", { value: a.fontFamily === DEFAULT_FONT ? "" : a.fontFamily, list: "fonts", placeholder: "Theme default" });
+  const fonts = h("datalist", { id: "fonts" }, ...FONTS.map((f) => h("option", { value: f })));
+  const size = h("input", { type: "number", value: String(a.fontSize), min: "6", max: "48", step: "0.5" });
+  const cursor = select([["block", "Block"], ["underline", "Underline"], ["bar", "Bar"]], a.cursorStyle);
+  const blink = h("input", { type: "checkbox", checked: a.cursorBlink });
+  const ligatures = h("input", { type: "checkbox", checked: a.ligatures });
+  const scrollback = h("input", { type: "number", value: String(a.scrollback), min: "0", step: "1000" });
+  const preview = h("pre", { class: "preview" });
+  const renderPreview = () => {
+    const t = getTheme(themeSel.value);
+    preview.style.background = t.background;
+    preview.style.color = t.foreground;
+    preview.style.fontFamily = effectiveFont({ themeId: themeSel.value, fontFamily: font.value });
+    preview.style.fontSize = `${Number(size.value) || 14}px`;
+    const col = (text: string, color: string) => h("span", { style: `color:${color}` }, text);
+    preview.replaceChildren(
+      `user@${hostName()}:~$ ls -la\n`,
+      col("drwxr-xr-x", t.ansi[4]), " ", col("config", t.ansi[2]), " ", col("error.log", t.ansi[1]), " ", col("notes.txt", t.ansi[3]), "\n",
+      ...t.ansi.map((c) => h("span", { style: `background:${c}` }, "  ")),
+    );
+  };
+  [themeSel, font, size].forEach((e) => e.addEventListener("input", renderPreview));
+  // A theme can carry a size (e.g. SGI's screen font); picking it applies that. The font family is
+  // only ever the profile's own override, so it is left alone here.
+  let prevThemeId = themeSel.value;
+  themeSel.addEventListener("change", () => {
+    const next = getTheme(themeSel.value);
+    const prev = getTheme(prevThemeId);
+    if (next.fontFamily && next.fontSize) size.value = String(next.fontSize);
+    else if (prev.fontFamily && Number(size.value) === prev.fontSize) size.value = "14";
+    prevThemeId = themeSel.value;
+  });
+  renderPreview();
+
+  const el = h("div", {},
+    h("div", { class: "grid" },
+      field("Colour theme", h("div", { class: "row" }, themeSel, editThemes)),
+      field("Font", font), field("Font size", size), field("Cursor", cursor),
+      field("Scrollback (lines)", scrollback), h("label", { class: "check" }, blink, " Blinking cursor"),
+      h("label", { class: "check" }, ligatures, " Font ligatures (needs a font that has them)"), fonts),
+    preview);
+  return {
+    el,
+    refresh: renderPreview,
+    read: (): Look => ({
+      themeId: themeSel.value, fontFamily: font.value.trim(), fontSize: Number(size.value) || 14,
+      cursorStyle: cursor.value as Look["cursorStyle"], cursorBlink: blink.checked, ligatures: ligatures.checked, scrollback: Number(scrollback.value) || 0,
+    }),
+  };
+}
+
+/** The look of one local terminal. Resolves with the new look once saved, or null if cancelled. */
+export async function localLookDialog(shell: Profile): Promise<Look | null> {
+  const form = appearanceForm(shell.appearance, () => "this-computer");
+  let saved: Look | null = null;
+  await modal(`Appearance: ${shell.name}`, h("div", {}, form.el,
+    h("p", { class: "muted" }, "Applies to this shell in every tab and is remembered. Ctrl+wheel in the terminal changes its size, and that is remembered too.")), [
+    { label: "Cancel" },
+    {
+      label: "Save",
+      primary: true,
+      action: async () => {
+        const look = form.read();
+        await api.setLocalLook(shell.id, look);
+        saved = look;
+      },
+    },
+  ]);
+  return saved;
 }
 
 // ---------------------------------------------------------------- theme editor
@@ -373,7 +520,7 @@ export async function themeDialog(current: string): Promise<string | null> {
     };
     paint();
     const swatches = h("div", { class: "swatches" },
-      ...[
+      ...([
         ["Background", () => draft.background, (v: string) => (draft.background = v)],
         ["Foreground", () => draft.foreground, (v: string) => (draft.foreground = v)],
         ["Cursor", () => draft.cursor, (v: string) => (draft.cursor = v)],
@@ -381,7 +528,7 @@ export async function themeDialog(current: string): Promise<string | null> {
         ...draft.ansi.map((_, i) => [
           (i < 8 ? "" : "Bright ") + COLOR_NAMES[i % 8], () => draft.ansi[i], (v: string) => (draft.ansi[i] = v),
         ]),
-      ].map(([l, g, s]: any) => h("label", { class: "swatch" }, color(g, s), h("span", {}, l))),
+      ] as [string, () => string, (v: string) => string][]).map(([l, g, s]) => h("label", { class: "swatch" }, color(g, s), h("span", {}, l))),
     );
     const isUser = !isBuiltin(base.id);
     area.replaceChildren(

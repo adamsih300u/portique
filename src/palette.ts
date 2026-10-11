@@ -11,6 +11,10 @@ export interface PaletteItem {
   keywords?: string;
   /** Shortcut shown on the right. */
   hint?: string;
+  /** For entries made from the typed text: keep above ("top") or below ("bottom") the ranked matches. */
+  pin?: "top" | "bottom";
+  /** "browse": listed only while nothing is typed. "search": found only by typing (keeps a long family of commands, like the toolbox, out of the default list). */
+  only?: "browse" | "search";
   run: () => void;
 }
 
@@ -30,6 +34,8 @@ export interface FindTarget {
 
 export interface PaletteHooks {
   items(): PaletteItem[];
+  /** Entries made from what is typed (quick connect, and later toolbox commands such as a name lookup). */
+  dynamic?(query: string): PaletteItem[];
   /** The search target, or null when the active tab has nothing to search. */
   findTarget(): FindTarget | null;
 }
@@ -107,8 +113,8 @@ const lastFind: { query: string; opts: FindOptions } = { query: "", opts: { rege
 export const paletteOpen = () => closeCurrent !== null;
 export const closePalette = () => closeCurrent?.(true);
 
-/** Shows the palette. `mode` "find" starts in terminal search when there is something to search. */
-export function openPalette(hooks: PaletteHooks, mode: "commands" | "find" = "commands") {
+/** Shows the palette. `mode` "find" starts in terminal search when there is something to search; `initial` pre-fills the box. */
+export function openPalette(hooks: PaletteHooks, mode: "commands" | "find" = "commands", initial = "") {
   if (closeCurrent) return closeCurrent(true);
   if (document.querySelector(".overlay")) return; // a dialog (e.g. the vault unlock) is up
 
@@ -155,9 +161,13 @@ export function openPalette(hooks: PaletteHooks, mode: "commands" | "find" = "co
     const q = input.value;
     if (!q.trim()) {
       const rec = recents().map((id) => all.find((i) => i.id === id)).filter((i): i is PaletteItem => !!i);
-      const rest = all.filter((i) => !rec.includes(i));
+      const rest = all.filter((i) => !rec.includes(i) && i.only !== "search");
       shown = [...rec.map((item) => ({ item, at: [] as number[], recent: true })), ...rest.map((item) => ({ item, at: [] as number[], recent: false }))];
-    } else shown = rank(all, q);
+    } else {
+      shown = rank(all.filter((i) => i.only !== "browse"), q);
+      const extra = (hooks.dynamic?.(q.trim()) ?? []).map((item) => ({ item, at: [] as number[] }));
+      shown = [...extra.filter((m) => m.item.pin === "top"), ...shown, ...extra.filter((m) => m.item.pin !== "top")];
+    }
     sel = Math.min(sel, Math.max(0, shown.length - 1));
     const rows: HTMLElement[] = [];
     let heading = "";
@@ -290,6 +300,7 @@ export function openPalette(hooks: PaletteHooks, mode: "commands" | "find" = "co
   });
 
   document.body.append(overlay);
+  input.value = initial;
   if (mode === "find" && target) startFind();
   else sync();
   input.focus();

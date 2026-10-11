@@ -1,11 +1,16 @@
+mod agent;
 mod http;
+mod ipc;
 mod keys;
+mod local;
+mod memguard;
 mod serial;
 mod sftp;
 mod session;
 mod ssh;
 mod store;
 mod telnet;
+mod toolbox;
 mod tunnel;
 mod vault;
 mod window;
@@ -13,6 +18,7 @@ mod window;
 use serde::Serialize;
 use session::{Ctl, Emitter, Params, Sessions};
 use store::{Profile, Theme};
+use zeroize::Zeroizing;
 use tauri::{
     ipc::{Channel, InvokeResponseBody},
     State,
@@ -38,6 +44,9 @@ fn save_profile(mut profile: Profile) -> Res<Profile> {
     if profile.id.is_empty() {
         profile.id = uuid::Uuid::new_v4().to_string();
     }
+    if profile.protocol == store::Protocol::Local || profile.id.starts_with(local::PREFIX) {
+        return Err("local terminals are not saved as profiles".into());
+    }
     if profile.protocol != store::Protocol::Ssh {
         profile.jump_host = None;
         profile.forwards.clear();
@@ -52,6 +61,13 @@ fn save_profile(mut profile: Profile) -> Res<Profile> {
     Ok(profile)
 }
 
+/// Registers a host typed into quick connect and returns it with an id. It lives in memory only, so it
+/// is never listed or saved unless the user saves it from the editor.
+#[tauri::command]
+fn quick_profile(profile: Profile) -> Res<Profile> {
+    store::add_quick(profile).map_err(err)
+}
+
 #[tauri::command]
 fn delete_profile(id: String) -> Res<()> {
     let mut all = store::load_profiles().map_err(err)?;
@@ -63,6 +79,11 @@ fn delete_profile(id: String) -> Res<()> {
     store::save_profiles(&all).map_err(err)?;
     // Best effort: a locked vault must not block deleting the profile entry.
     let _ = vault::global().delete(&vault::password_account(&id));
+    // Whatever access an agent had to it goes with it.
+    let mut s = window::load();
+    if s.agent.profiles.remove(&id).is_some() {
+        let _ = window::save(&s);
+    }
     Ok(())
 }
 
@@ -104,6 +125,32 @@ fn set_api_secret(env_id: String, name: String, value: String) -> Res<()> {
 #[tauri::command]
 fn has_api_secret(env_id: String, name: String) -> Res<bool> {
     vault::global().contains(&http::secret_account(&env_id, &name)).map_err(err)
+}
+
+/// Largest file the import reader will take.
+const MAX_IMPORT: u64 = 20 * 1024 * 1024;
+
+/// Reads a text file chosen in the import dialog.
+#[tauri::command]
+async fn read_text_file(path: String) -> Res<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let len = std::fs::metadata(&path).map_err(|e| format!("cannot read {path}: {e}"))?.len();
+        if len > MAX_IMPORT {
+            return Err(format!("{path} is too large to import ({} MB)", len / 1024 / 1024));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        String::from_utf8(bytes).map_err(|_| format!("{path} is not a text file"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Writes a text file chosen in the export dialog.
+#[tauri::command]
+async fn write_text_file(path: String, content: String) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(&path, content).map_err(|e| format!("cannot write {path}: {e}")))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -164,18 +211,35 @@ fn vault_status() -> VaultStatus {
     VaultStatus { exists: v.exists(), unlocked: v.is_unlocked(), min_password_len: vault::MIN_PASSWORD_LEN }
 }
 
+/// Exactly `N` secrets from a request whose body is raw bytes (see `ipc.rs`). The commands that
+/// take the master password use this instead of JSON arguments.
+fn take_secrets<const N: usize>(request: &tauri::ipc::Request<'_>) -> Res<[Zeroizing<String>; N]> {
+    ipc::secrets(request, N)?.try_into().map_err(|_| "malformed secret payload".to_string())
+}
+
+/// Live strength rating for the password dialogs. The backend re-checks on create and change.
+#[tauri::command]
+fn vault_password_strength(request: tauri::ipc::Request<'_>) -> Res<vault::Strength> {
+    let [password] = take_secrets::<1>(&request)?;
+    Ok(vault::assess(&password))
+}
+
 /// Argon2 is deliberately slow and memory-hungry, so run it off the UI thread.
 #[tauri::command]
-async fn vault_create(password: String) -> Res<()> {
+async fn vault_create(request: tauri::ipc::Request<'_>) -> Res<()> {
+    let [password] = take_secrets::<1>(&request)?;
     tauri::async_runtime::spawn_blocking(move || vault::global().create(&password, vault::Kdf::DEFAULT))
         .await
         .map_err(|e| e.to_string())?
         .map_err(err)
 }
 
+/// `accept-older` is not a secret, so it travels as a header.
 #[tauri::command]
-async fn vault_unlock(password: String) -> Res<()> {
-    tauri::async_runtime::spawn_blocking(move || vault::global().unlock(&password))
+async fn vault_unlock(request: tauri::ipc::Request<'_>) -> Res<()> {
+    let [password] = take_secrets::<1>(&request)?;
+    let accept_older = ipc::header(&request, "accept-older") == Some("true");
+    tauri::async_runtime::spawn_blocking(move || vault::global().unlock(&password, accept_older))
         .await
         .map_err(|e| e.to_string())?
         .map_err(err)
@@ -191,8 +255,10 @@ fn vault_touch() {
     vault::global().touch();
 }
 
+/// The old password, then the new one.
 #[tauri::command]
-async fn vault_change_password(old: String, new: String) -> Res<()> {
+async fn vault_change_password(request: tauri::ipc::Request<'_>) -> Res<()> {
+    let [old, new] = take_secrets::<2>(&request)?;
     tauri::async_runtime::spawn_blocking(move || vault::global().change_password(&old, &new))
         .await
         .map_err(|e| e.to_string())?
@@ -202,10 +268,21 @@ async fn vault_change_password(old: String, new: String) -> Res<()> {
 // ---- saved passwords (write-only from the UI) -------------------------------
 
 #[tauri::command]
-fn set_password(profile_id: String, password: String) -> Res<()> {
+fn set_password(profile_id: String, password: Zeroizing<String>) -> Res<()> {
     let mut v = vault::global();
     let acct = vault::password_account(&profile_id);
     if password.is_empty() { v.delete(&acct) } else { v.set(&acct, &password) }.map_err(err)
+}
+
+/// Copies a saved password to another profile inside Rust, so a duplicate keeps its login
+/// without the interface ever reading the secret. Does nothing if the source has none.
+#[tauri::command]
+fn copy_password(from_id: String, to_id: String) -> Res<()> {
+    let mut v = vault::global();
+    if let Some(pw) = v.get(&vault::password_account(&from_id)).map_err(err)? {
+        v.set(&vault::password_account(&to_id), &pw).map_err(err)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -220,9 +297,32 @@ fn list_keys() -> Res<Vec<keys::KeyInfo>> {
     keys::list().map_err(err)
 }
 
+/// The public half of a key in the vault, for putting on a server. Nothing secret is returned.
 #[tauri::command]
-fn import_key(name: String, pem: String, passphrase: Option<String>) -> Res<keys::KeyInfo> {
-    keys::import(&name, &pem, passphrase.as_deref().filter(|s| !s.is_empty())).map_err(err)
+fn key_public(id: String) -> Res<keys::PublicKey> {
+    keys::public(&id).map_err(err)
+}
+
+#[tauri::command]
+fn import_key(name: String, pem: Zeroizing<String>, passphrase: Option<Zeroizing<String>>) -> Res<keys::KeyInfo> {
+    keys::import_checked(&name, &pem, passphrase.as_ref().map(|s| s.as_str()).filter(|s| !s.is_empty())).map_err(err)
+}
+
+/// Does this profile's server accept this vault key? Signs in with the key alone and disconnects. It sends nothing
+/// but the key's signature, and returns nothing but yes or why not.
+#[tauri::command]
+async fn check_key_login(profile_id: String, key_id: String) -> Res<()> {
+    let p = store::get_profile(&profile_id).map_err(err)?;
+    if p.protocol != store::Protocol::Ssh {
+        return Err("only SSH profiles sign in with a key".into());
+    }
+    ssh::check_key(&p, &key_id).await.map_err(err)
+}
+
+/// Makes a new key in the vault. Only its name and fingerprint come back; the private key stays in Rust.
+#[tauri::command]
+fn generate_key(name: String) -> Res<keys::KeyInfo> {
+    keys::generate(&name).map_err(err)
 }
 
 #[tauri::command]
@@ -276,17 +376,68 @@ fn set_gpu(enabled: bool) -> Res<()> {
 
 /// General preferences from the settings pane (the hotkey, drop-down mode and GPU have their own commands).
 #[tauri::command]
-fn set_prefs(restore_tabs: bool, sftp_local_dir: String, ui_scale: String) -> Res<()> {
+fn set_prefs(restore_tabs: bool, sftp_local_dir: String, ui_scale: String, vault_idle_minutes: u32) -> Res<()> {
     if sftp_local_dir.len() > 4096 || sftp_local_dir.contains('\0') {
         return Err("that folder path is not valid".into());
     }
     if !["normal", "large"].contains(&ui_scale.as_str()) {
         return Err("unknown interface size".into());
     }
+    if !window::VAULT_IDLE_CHOICES.contains(&vault_idle_minutes) {
+        return Err("unknown vault lock time".into());
+    }
     let mut s = window::load();
+    s.vault_idle_minutes = vault_idle_minutes;
     s.restore_tabs = restore_tabs;
     s.sftp_local_dir = sftp_local_dir.trim().to_string();
     s.ui_scale = ui_scale;
+    window::save(&s).map_err(err)
+}
+
+/// The shells found on this computer, for the settings pane. Looks again each time.
+#[tauri::command]
+async fn list_local_shells() -> Res<Vec<local::Shell>> {
+    tauri::async_runtime::spawn_blocking(local::detect).await.map_err(|e| e.to_string())
+}
+
+/// The local terminals the settings turn on, as profiles to list and open (empty when they are off).
+#[tauri::command]
+async fn list_local_terminals() -> Res<Vec<Profile>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let s = window::load();
+        if !s.local_terminals {
+            return Vec::new();
+        }
+        let shells = local::detect();
+        s.local_shells.iter().filter_map(|id| shells.iter().find(|x| &x.id == id)).map(|x| local::profile_of(x, &s)).collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Turns local terminals on or off and chooses which shells to offer. Unknown shells are dropped.
+#[tauri::command]
+async fn set_local_terminals(enabled: bool, shells: Vec<String>) -> Res<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = local::detect();
+        let mut s = window::load();
+        s.local_terminals = enabled;
+        s.local_shells = known.iter().filter(|k| shells.contains(&k.id)).map(|k| k.id.clone()).collect();
+        window::save(&s).map_err(err)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Remembers how one local shell looks. `id` is the profile id (`local:<shell id>`).
+#[tauri::command]
+fn set_local_look(id: String, look: store::Appearance) -> Res<()> {
+    if !look.valid() {
+        return Err("that look has a value out of range".into());
+    }
+    let mut s = window::load();
+    let shell = id.strip_prefix(local::PREFIX).filter(|x| s.local_shells.iter().any(|y| y == x)).ok_or("that local terminal is not turned on")?.to_string();
+    s.local_look.insert(shell, look);
     window::save(&s).map_err(err)
 }
 
@@ -343,8 +494,8 @@ fn connect_session(
     profile_id: String,
     cols: u16,
     rows: u16,
-    password: Option<String>,
-    passphrase: Option<String>,
+    password: Option<Zeroizing<String>>,
+    passphrase: Option<Zeroizing<String>>,
     on_event: Channel<InvokeResponseBody>,
 ) -> Res<String> {
     let profile = store::get_profile(&profile_id).map_err(err)?;
@@ -364,8 +515,9 @@ fn session_input(sessions: State<'_, Sessions>, id: String, data: Vec<u8>) {
 }
 
 #[tauri::command]
-fn session_resize(sessions: State<'_, Sessions>, id: String, cols: u16, rows: u16) {
+fn session_resize(sessions: State<'_, Sessions>, agents: State<'_, agent::Agents>, id: String, cols: u16, rows: u16) {
     sessions.send(&id, Ctl::Resize(cols, rows));
+    agents.resized(&id, cols, rows);
 }
 
 #[tauri::command]
@@ -380,8 +532,8 @@ fn session_close(sessions: State<'_, Sessions>, id: String) {
 fn connect_sftp(
     sessions: State<'_, Sessions>,
     profile_id: String,
-    password: Option<String>,
-    passphrase: Option<String>,
+    password: Option<Zeroizing<String>>,
+    passphrase: Option<Zeroizing<String>>,
     on_event: Channel<InvokeResponseBody>,
 ) -> Res<String> {
     let profile = store::get_profile(&profile_id).map_err(err)?;
@@ -389,6 +541,24 @@ fn connect_sftp(
         return Err("SFTP needs an SSH profile".into());
     }
     let params = Params { password, passphrase, sftp: true, ..Default::default() };
+    Ok(session::start(&sessions, profile, params, Emitter::new(on_event)))
+}
+
+/// Logs in to an SSH profile and offers a local SOCKS5 proxy through it (a `proxy` status carries the
+/// port), for sending API requests from the server's point of view. Same event stream and prompts as `connect_session`.
+#[tauri::command]
+fn connect_proxy(
+    sessions: State<'_, Sessions>,
+    profile_id: String,
+    password: Option<Zeroizing<String>>,
+    passphrase: Option<Zeroizing<String>>,
+    on_event: Channel<InvokeResponseBody>,
+) -> Res<String> {
+    let profile = store::get_profile(&profile_id).map_err(err)?;
+    if profile.protocol != store::Protocol::Ssh {
+        return Err("Only SSH profiles can carry API requests".into());
+    }
+    let params = Params { password, passphrase, proxy: true, ..Default::default() };
     Ok(session::start(&sessions, profile, params, Emitter::new(on_event)))
 }
 
@@ -423,6 +593,153 @@ fn sftp_cancel(id: String, tid: String) {
     sftp::cancel(&id, &tid);
 }
 
+// ---- Toolbox (palette) --------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct ToolPorts {
+    address: String,
+    results: Vec<toolbox::PortResult>,
+}
+
+#[tauri::command]
+async fn tool_dns(name: String) -> Res<Vec<String>> {
+    Ok(toolbox::dns(&name).await.map_err(err)?.iter().map(|ip| ip.to_string()).collect())
+}
+
+#[tauri::command]
+async fn tool_ports(host: String, ports: Vec<u16>) -> Res<ToolPorts> {
+    let (ip, results) = toolbox::check_ports(&host, &ports).await.map_err(err)?;
+    Ok(ToolPorts { address: ip.to_string(), results })
+}
+
+#[tauri::command]
+async fn tool_tcp_ping(host: String, port: u16, count: u32) -> Res<ToolPorts> {
+    let (ip, results) = toolbox::tcp_ping(&host, port, count).await.map_err(err)?;
+    Ok(ToolPorts { address: ip.to_string(), results })
+}
+
+#[tauri::command]
+async fn tool_wake(mac: String, broadcast: String) -> Res<String> {
+    toolbox::wake(&mac, &broadcast).await.map_err(err)
+}
+
+/// Runs one command on the server of an open SSH shell, beside it. The interface can already type into that
+/// shell, so this gives it nothing more; it just returns the output instead of drawing it in a terminal.
+#[tauri::command]
+async fn ssh_exec(session: String, command: String, stdin: Option<String>, timeout_secs: Option<u64>) -> Res<ssh::ExecOut> {
+    ssh::exec(&session, &command, stdin.as_deref(), timeout_secs.unwrap_or(30)).await.map_err(err)
+}
+
+// ---- agent access (MCP) --------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentStatus {
+    enabled: bool,
+    endpoint: Option<agent::Endpoint>,
+    sessions: Vec<agent::SessionInfo>,
+}
+
+fn agent_status_now(agents: &agent::Agents) -> AgentStatus {
+    AgentStatus { enabled: window::load().agent.enabled, endpoint: agents.endpoint(), sessions: agents.sessions() }
+}
+
+#[tauri::command]
+fn agent_status(agents: State<'_, agent::Agents>) -> AgentStatus {
+    agent_status_now(&agents)
+}
+
+/// Switches agent access on or off, and whether an agent needs the master password before it runs anything in a session.
+/// Off closes every session an agent opened. If the server cannot start, the setting stays off.
+#[tauri::command]
+async fn agent_set_enabled(agents: State<'_, agent::Agents>, enabled: bool, require_password: bool) -> Res<AgentStatus> {
+    let mut s = window::load();
+    s.agent.enabled = enabled;
+    s.agent.require_password = require_password;
+    window::save(&s).map_err(err)?;
+    if let Err(e) = agents.apply().await {
+        s.agent.enabled = false;
+        let _ = window::save(&s);
+        agents.stop();
+        return Err(err(e));
+    }
+    Ok(agent_status_now(&agents))
+}
+
+/// How far an agent may go on one profile (`local:<shell id>` for a local terminal). Only profiles that exist can be given access.
+#[tauri::command]
+fn agent_set_mode(agents: State<'_, agent::Agents>, profile_id: String, mode: window::AgentMode) -> Res<()> {
+    let mut s = window::load();
+    let saved = store::load_profiles().map_err(err)?.iter().any(|p| p.id == profile_id && p.protocol != store::Protocol::Api);
+    if !saved && local::profile_for(&profile_id, &s).is_none() {
+        return Err("that profile does not have a terminal an agent could use".into());
+    }
+    if mode == window::AgentMode::Off {
+        s.agent.profiles.remove(&profile_id);
+    } else {
+        s.agent.profiles.insert(profile_id, mode);
+    }
+    window::save(&s).map_err(err)?;
+    agents.policy_changed();
+    Ok(())
+}
+
+/// The person's answer to a question the agent put (`agent-approval` event).
+#[tauri::command]
+fn agent_answer(agents: State<'_, agent::Agents>, id: String, decision: agent::Decision) -> bool {
+    agents.answer(&id, decision)
+}
+
+/// The person's answer to a question that asks for the master password (`password` is true in the event). The password
+/// comes as raw bytes like the vault's own (`ipc.rs`); the question and the decision are plain headers. A wrong password is
+/// an error the dialog shows, and the question stays open.
+#[tauri::command]
+async fn agent_answer_password(agents: State<'_, agent::Agents>, request: tauri::ipc::Request<'_>) -> Res<bool> {
+    let [password] = take_secrets::<1>(&request)?;
+    let id = ipc::header(&request, "question-id").ok_or("no question named")?.to_string();
+    let decision = match ipc::header(&request, "decision") {
+        Some("once") => agent::Decision::Once,
+        Some("session") => agent::Decision::Session,
+        Some("deny") => agent::Decision::Deny,
+        _ => return Err("no decision given".into()),
+    };
+    let agents = agents.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || agents.answer_password(&id, decision, &password)).await.map_err(|e| e.to_string())?
+}
+
+/// Shows an agent's session in a tab: replays what it printed so far, then streams the rest. Same frames as `connect_session`.
+#[tauri::command]
+fn agent_attach(agents: State<'_, agent::Agents>, id: String, on_event: Channel<InvokeResponseBody>) -> Res<()> {
+    if agents.attach(&id, Emitter::new(on_event)) { Ok(()) } else { Err("that session is gone".into()) }
+}
+
+/// The person typed into an agent's tab: the agent waits until it is handed back.
+#[tauri::command]
+fn agent_takeover(agents: State<'_, agent::Agents>, id: String) {
+    agents.took_control(&id);
+}
+
+#[tauri::command]
+fn agent_resume(agents: State<'_, agent::Agents>, id: String) {
+    agents.handed_back(&id);
+}
+
+#[tauri::command]
+fn agent_activity(agents: State<'_, agent::Agents>) -> Vec<agent::Audit> {
+    agents.activity()
+}
+
+/// Text to give an agent program: `stdio` (JSON settings) or `command` (one line). Neither holds a secret.
+#[tauri::command]
+fn agent_config(agents: State<'_, agent::Agents>, kind: String) -> Res<String> {
+    agents.config(&kind).map_err(|e| e.0)
+}
+
+/// For `portique mcp`: the bridge between an agent program's stdio and the running app.
+pub fn run_mcp_bridge() -> i32 {
+    agent::shim::main()
+}
+
 #[tauri::command]
 fn local_home() -> String {
     sftp::local_home()
@@ -450,11 +767,25 @@ async fn local_delete(path: String) -> Res<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    memguard::harden_process();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Sessions::default())
         .setup(|app| {
+            let sessions = tauri::Manager::state::<Sessions>(app).inner().clone();
+            let agents = agent::Agents::new(std::sync::Arc::new(agent::AppHost(app.handle().clone())), sessions);
+            tauri::Manager::manage(app, agents.clone());
+            // The server only listens if the person switched agent access on.
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = agents.apply().await {
+                    eprintln!("agent access disabled: {e:#}");
+                    let mut s = window::load();
+                    s.agent.enabled = false;
+                    let _ = window::save(&s);
+                }
+            });
             let settings = window::load();
             if settings.quake {
                 if let Err(e) = window::apply_quake(app.handle(), &settings) {
@@ -466,7 +797,11 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    if vault::global().lock_if_idle(vault::IDLE_LOCK) {
+                    let minutes = window::load().vault_idle_minutes;
+                    if minutes == 0 {
+                        continue;
+                    }
+                    if vault::global().lock_if_idle(std::time::Duration::from_secs(u64::from(minutes) * 60)) {
                         let _ = tauri::Emitter::emit(&handle, "vault-locked", ());
                     }
                 }
@@ -474,16 +809,36 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            agent_status,
+            agent_set_enabled,
+            agent_set_mode,
+            agent_answer,
+            agent_answer_password,
+            agent_attach,
+            agent_takeover,
+            agent_resume,
+            agent_activity,
+            agent_config,
+            tool_dns,
+            tool_ports,
+            tool_tcp_ping,
+            tool_wake,
+            ssh_exec,
             vault_status,
             vault_create,
             vault_unlock,
             vault_lock,
             vault_touch,
             vault_change_password,
+            vault_password_strength,
             list_profiles,
             save_profile,
             delete_profile,
             get_settings,
+            list_local_shells,
+            set_local_look,
+            list_local_terminals,
+            set_local_terminals,
             set_ui,
             set_prefs,
             set_quake_key,
@@ -495,10 +850,15 @@ pub fn run() {
             list_themes,
             save_theme,
             delete_theme,
+            quick_profile,
             set_password,
+            copy_password,
             has_password,
             list_keys,
             import_key,
+            key_public,
+            generate_key,
+            check_key_login,
             delete_key,
             forget_host,
             list_serial_ports,
@@ -525,7 +885,16 @@ pub fn run() {
             has_api_secret,
             http_send,
             http_cancel,
+            connect_proxy,
+            read_text_file,
+            write_text_file,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Take the address file down with the server, so the bridge does not look for a dead one.
+            if matches!(event, tauri::RunEvent::Exit) {
+                tauri::Manager::state::<agent::Agents>(app).stop();
+            }
+        });
 }

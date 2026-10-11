@@ -1,7 +1,8 @@
-import { api, Channel, FileEntry, Listing, Profile, TransferItem } from "./api";
+import { api, Channel, type FileEntry, type Listing, type Profile, type TransferItem } from "./api";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
-import { MenuEntries, menuOn } from "./menu";
+import { type MenuEntries, menuOn } from "./menu";
 import { h, modal, promptText } from "./ui";
+import { protoIcon } from "./proto-icon";
 import { ensureUnlocked } from "./vault-ui";
 
 type Side = "local" | "remote";
@@ -18,7 +19,10 @@ function fmtSize(n: number): string {
   const u = ["KB", "MB", "GB", "TB"];
   let v = n / 1024;
   let i = 0;
-  while (v >= 1024 && i < u.length - 1) (v /= 1024), i++;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
   return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
 }
 
@@ -166,7 +170,10 @@ class FilePane {
     const col = (key: "name" | "size" | "mtime", label: string) =>
       h("button", { class: "fm-col" + (this.sortKey === key ? " on" : ""), onclick: () => {
         if (this.sortKey === key) this.sortDir = (this.sortDir * -1) as 1 | -1;
-        else (this.sortKey = key, this.sortDir = 1);
+        else {
+          this.sortKey = key;
+          this.sortDir = 1;
+        }
         this.renderHead();
         this.render();
       } }, label, this.sortKey === key ? h("span", {}, this.sortDir === 1 ? " ▴" : " ▾") : null);
@@ -397,12 +404,13 @@ export class FileTab {
   private lastSecrets: [string?, string?] = [];
   private state: FileState = "connecting";
   disposed = false;
+  private shown = false;
   onChange: () => void = () => {};
   /** The global default start folder for the local pane (Settings); a profile's own folder wins over it. */
   static defaultLocalDir = "";
 
   constructor(readonly profile: Profile) {
-    this.header = h("div", { class: "tab filetab-header" }, this.dot, this.label, h("span", { class: "tbadge" }, h("span", { title: "File browser (SFTP)" }, "SFTP")), this.closeBtn);
+    this.header = h("div", { class: "tab filetab-header" }, this.dot, this.label, h("span", { class: "tbadge" }, protoIcon("sftp")), this.closeBtn);
     this.header.style.setProperty("--tab-bg", "var(--bg)");
     this.label.textContent = profile.name;
 
@@ -460,8 +468,10 @@ export class FileTab {
   // ------------------------------------------------------------ Tab-like surface used by the app shell
 
   show(on: boolean) {
+    this.shown = on;
     this.el.style.display = on ? "" : "none";
     this.header.classList.toggle("active", on);
+    if (on) this.header.classList.remove("unread");
     this.header.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     if (on) (this.remote.path ? this.remote : this.local).focus();
   }
@@ -637,6 +647,7 @@ export class FileTab {
     Object.assign(t, { state, done, total, message });
     this.render(t);
     if (finishing && t.dest.path === t.destDir) void t.dest.refresh();
+    if (finishing && state !== "cancelled" && (!this.shown || !document.hasFocus())) this.header.classList.add("unread");
     this.updateSummary();
   }
 

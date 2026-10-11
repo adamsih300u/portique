@@ -1,0 +1,50 @@
+# Release automation (release-please).
+#
+# On every push to main, release-please keeps a "release PR" up to date. It bumps
+# the version in package.json, Cargo.toml, Cargo.lock and tauri.conf.json and writes
+# CHANGELOG.md from Conventional Commit messages. Merging that PR creates the git tag
+# and GitHub release; the jobs below then build and attach the executables.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    needs: [release-please, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" dist/* --clobber --repo "${{ github.repository }}"
