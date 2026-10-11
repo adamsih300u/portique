@@ -26,6 +26,8 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: rp
         with:
+          # Without this the action uses the repository's default branch, which is dev.
+          target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
