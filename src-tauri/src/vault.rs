@@ -209,6 +209,8 @@ pub struct Vault {
     /// Where the highest generation opened on this computer is kept.
     seen: PathBuf,
     state: Option<Unlocked>,
+    /// How many times this process has opened the vault. Not saved: it only tells "still the same unlock" from "locked and opened again".
+    unlocks: u64,
 }
 
 fn derive(password: &str, salt: &[u8], kdf: &Kdf) -> Result<LockedKey> {
@@ -234,7 +236,7 @@ impl Unlocked {
 
 impl Vault {
     pub fn new(path: PathBuf, seen: PathBuf) -> Self {
-        Self { path, seen, state: None }
+        Self { path, seen, state: None, unlocks: 0 }
     }
 
     /// The highest generation this computer has opened; 0 if none is recorded (or the note is unreadable).
@@ -277,6 +279,7 @@ impl Vault {
         let st = Unlocked { key, kdf, salt, secrets: Secrets::new()?, generation: 0, last_used: Instant::now() };
         st.note_if_unpinned();
         self.state = Some(st);
+        self.unlocks += 1;
         self.save()?;
         // A new vault starts a new history, whatever an earlier one left behind.
         let generation = self.unlocked()?.generation;
@@ -327,7 +330,18 @@ impl Vault {
         self.record_seen(found);
         st.note_if_unpinned();
         self.state = Some(st);
+        self.unlocks += 1;
         Ok(())
+    }
+
+    /// Checks a password against the vault file without changing whether it is open. It costs a full key derivation.
+    pub fn verify(&self, password: &str) -> Result<()> {
+        self.read(password).map(drop)
+    }
+
+    /// Which opening of the vault this is, or `None` while it is locked. A value held earlier is the same unlock only if it matches.
+    pub fn epoch(&self) -> Option<u64> {
+        self.state.is_some().then_some(self.unlocks)
     }
 
     pub fn lock(&mut self) {
@@ -562,6 +576,35 @@ mod tests {
         w.lock();
         w.unlock(PW, false).unwrap();
         assert!(w.contains("b").unwrap());
+    }
+
+    #[test]
+    fn verify_checks_the_password_without_opening_or_closing_anything() {
+        let (_d, mut v) = vault();
+        v.create(PW, FAST).unwrap();
+        assert!(v.verify(PW).is_ok());
+        assert!(v.verify("not the password at all").is_err());
+        assert!(v.is_unlocked(), "a check leaves it open");
+        v.lock();
+        assert!(v.verify(PW).is_ok());
+        assert!(!v.is_unlocked(), "and leaves it shut");
+    }
+
+    #[test]
+    fn the_epoch_tells_one_unlock_from_the_next() {
+        let (_d, mut v) = vault();
+        assert_eq!(v.epoch(), None);
+        v.create(PW, FAST).unwrap();
+        let first = v.epoch().unwrap();
+        v.set("a", "1").unwrap();
+        assert_eq!(v.epoch(), Some(first), "saving is not a new unlock");
+        v.lock();
+        assert_eq!(v.epoch(), None);
+        v.unlock(PW, false).unwrap();
+        assert_ne!(v.epoch(), Some(first));
+        let second = v.epoch().unwrap();
+        assert!(v.unlock("wrong password here", false).is_err());
+        assert_eq!(v.epoch(), Some(second), "a failed attempt changes nothing");
     }
 
     #[test]

@@ -172,7 +172,81 @@ export interface Settings {
   localTerminals: boolean;
   /** Ids of the shells to offer (from `listLocalShells`). */
   localShells: string[];
+  /** Whether AI agents may use terminals, and on which profiles. */
+  agent: AgentSettings;
 }
+
+/** How far an agent may go on one profile. A profile with no entry is "off". */
+export type AgentMode = "off" | "ask" | "allow";
+
+export interface AgentSettings {
+  enabled: boolean;
+  /** Ask for the master password before an agent first runs anything in a session (when a vault exists). */
+  requirePassword: boolean;
+  profiles: Record<string, AgentMode>;
+}
+
+export interface AgentEndpoint {
+  url: string;
+  port: number;
+}
+
+/** A terminal session an agent opened. */
+export interface AgentSessionInfo {
+  session: string;
+  profile: string;
+  name: string;
+  host: string;
+  protocol: Protocol;
+  phase: "starting" | "awaiting-user" | "ready" | "ended";
+  state: string;
+  message: string;
+  /** Who holds the keyboard. */
+  controller: "agent" | "user";
+  cols: number;
+  rows: number;
+  fullScreen: boolean;
+  canRunCommands: boolean;
+  client: string;
+  ageSecs: number;
+}
+
+export interface AgentStatus {
+  enabled: boolean;
+  endpoint: AgentEndpoint | null;
+  sessions: AgentSessionInfo[];
+}
+
+/** What the agent asks the person (the `agent-approval` event). */
+export interface AgentQuestion {
+  id: string;
+  kind: "open" | "command" | "input";
+  client: string;
+  profile: string;
+  session: string | null;
+  /** What would run or be typed, exactly. */
+  text: string;
+  /** The dialog asks for the master password, and only a correct one can allow it. */
+  password: boolean;
+  /** The profile asks about each step; false when only the password is needed. */
+  confirm: boolean;
+}
+
+export type AgentDecision = "deny" | "once" | "session";
+
+/** One line of the activity log. */
+export interface AgentAudit {
+  at: number;
+  client: string;
+  profile: string;
+  session: string;
+  action: string;
+  text: string;
+  outcome: string;
+}
+
+/** Both start the `portique mcp` bridge and hold no secret. */
+export type AgentConfigKind = "stdio" | "command";
 
 /** A shell found on this computer. */
 export interface LocalShell {
@@ -353,6 +427,20 @@ export const api = {
     invoke<string | null>("plugin:dialog|open", { options: { multiple: false, directory: false, filters } }),
   chooseFileToSave: (defaultPath: string, filters: { name: string; extensions: string[] }[]) =>
     invoke<string | null>("plugin:dialog|save", { options: { defaultPath, filters } }),
+  agentStatus: () => invoke<AgentStatus>("agent_status"),
+  agentSetEnabled: (enabled: boolean, requirePassword: boolean) => invoke<AgentStatus>("agent_set_enabled", { enabled, requirePassword }),
+  /** Allows a question that asks for the master password. Rejects with a message if the password is wrong. */
+  agentAnswerPassword: (id: string, decision: AgentDecision, password: string) =>
+    invokeSecret<boolean>("agent_answer_password", [password], { "question-id": id, decision }),
+  agentSetMode: (profileId: string, mode: AgentMode) => invoke<void>("agent_set_mode", { profileId, mode }),
+  agentAnswer: (id: string, decision: AgentDecision) => invoke<boolean>("agent_answer", { id, decision }),
+  /** Shows an agent's session in a tab: replays what it printed, then streams the rest. */
+  agentAttach: (id: string, onEvent: Channel<ArrayBuffer>) => invoke<void>("agent_attach", { id, onEvent }),
+  /** The person typed into the tab: the agent waits until it is handed back. */
+  agentTakeover: (id: string) => invoke<void>("agent_takeover", { id }),
+  agentResume: (id: string) => invoke<void>("agent_resume", { id }),
+  agentActivity: () => invoke<AgentAudit[]>("agent_activity"),
+  agentConfig: (kind: AgentConfigKind) => invoke<string>("agent_config", { kind }),
   confirmHost: (id: string, accept: boolean) => invoke<void>("confirm_host", { id, accept }),
   input: (id: string, data: Uint8Array) => invoke<void>("session_input", { id, data: Array.from(data) }),
   resize: (id: string, cols: number, rows: number) => invoke<void>("session_resize", { id, cols, rows }),
