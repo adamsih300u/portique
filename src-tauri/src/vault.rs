@@ -389,12 +389,24 @@ impl Vault {
         false
     }
 
+    /// True while no vault has been created: the vault is made when the first secret is saved,
+    /// so until then there is nothing to unlock and nothing stored.
+    fn absent(&self) -> bool {
+        self.state.is_none() && !self.exists()
+    }
+
     /// Opens one secret; the returned copy zeroizes itself when dropped.
     pub fn get(&mut self, name: &str) -> Result<Option<Zeroizing<String>>> {
+        if self.absent() {
+            return Ok(None);
+        }
         self.unlocked()?.secrets.open(name)
     }
 
     pub fn contains(&mut self, name: &str) -> Result<bool> {
+        if self.absent() {
+            return Ok(false);
+        }
         Ok(self.unlocked()?.secrets.items.contains_key(name))
     }
 
@@ -404,6 +416,9 @@ impl Vault {
     }
 
     pub fn delete(&mut self, name: &str) -> Result<()> {
+        if self.absent() {
+            return Ok(());
+        }
         if self.unlocked()?.secrets.items.remove(name).is_some() {
             self.save()?;
         }
@@ -790,6 +805,21 @@ mod tests {
         let t = Instant::now();
         assert!(v.unlock(PW, false).unwrap_err().to_string().contains("unreasonable"));
         assert!(t.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn no_vault_yet_reads_as_empty_but_writing_needs_one() {
+        let (_d, mut v) = vault();
+        assert_eq!(v.get("a").unwrap(), None);
+        assert!(!v.contains("a").unwrap());
+        v.delete("a").unwrap();
+        // A write has nowhere to go: the caller must create the vault first.
+        assert_eq!(v.set("a", "b").unwrap_err().to_string(), LOCKED_MSG);
+        v.create(PW, FAST).unwrap();
+        v.set("a", "b").unwrap();
+        v.lock();
+        // Once a vault exists, a locked one still refuses reads.
+        assert_eq!(v.get("a").unwrap_err().to_string(), LOCKED_MSG);
     }
 
     #[test]

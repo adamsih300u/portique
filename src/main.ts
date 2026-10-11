@@ -24,7 +24,7 @@ import { fillPlaceholders, placeholders, type SavedCommand } from "./saved-comma
 import { isQuick, parseQuickTarget, type QuickTarget, quickLabel, quickProfileFor } from "./quick-connect";
 import { h, promptText } from "./ui";
 import { windowControls } from "./window-controls";
-import { changePasswordDialog, ensureUnlocked } from "./vault-ui";
+import { changePasswordDialog, ensureUnlocked, lockNow, onVaultCreated, unlockIfExists } from "./vault-ui";
 import { listen } from "@tauri-apps/api/event";
 import { initSidebar } from "./sidebar-layout";
 
@@ -72,6 +72,10 @@ const gearIcon = () => {
   return el;
 };
 
+// Only there once a vault exists: before the first saved secret there is nothing to lock.
+const lockBtn = h("button", { class: "icon", title: "Lock the vault now", hidden: true, onclick: () => void lockNow() }, "🔒");
+onVaultCreated(() => { lockBtn.hidden = false; });
+
 const moreBtn = h("button", { class: "icon", title: "Menu and settings", onclick: () => {
   const r = moreBtn.getBoundingClientRect();
   contextMenu(r.left, r.bottom + 2, [
@@ -92,7 +96,7 @@ document.querySelector("#app")!.append(
     h("div", { class: "brand", "data-tauri-drag-region": true }, emblem(), h("span", {}, "Portique")),
     h("div", { class: "side-head" },
       h("button", { class: "primary", onclick: () => void newProfile() }, "+ New"),
-      h("button", { class: "icon", title: "Lock the vault now", onclick: async () => { await api.vaultLock(); await ensureUnlocked(); } }, "🔒"),
+      lockBtn,
       moreBtn),
     search, sidebar,
     h("button", { class: "help-link", title: "Keyboard shortcuts", onclick: () => toggleHelp(settings.quakeKey, settings.quake) }, "Keyboard shortcuts", h("kbd", {}, "F1"))),
@@ -699,7 +703,7 @@ function paletteItems(): PaletteItem[] {
   add("App", "new-profile", "New profile…", () => void newProfile());
   add("App", "save-workspace", "Save workspace…", () => void saveWorkspace());
   add("App", "ssh-keys", "SSH keys…", () => void manageKeysDialog());
-  add("App", "lock", "Lock the vault", () => void api.vaultLock().then(() => ensureUnlocked()));
+  add("App", "lock", "Lock the vault", () => void lockNow());
   add("App", "master-pw", "Change master password…", () => void changePasswordDialog());
   add("App", "sidebar", sideLayout.isCollapsed() ? "Show the sidebar" : "Hide the sidebar", () => sideLayout.toggle(), { hint: "Ctrl+Shift+B", keywords: "collapse full width" });
   add("App", "shortcuts", "Keyboard shortcuts", () => toggleHelp(settings.quakeKey, settings.quake), { hint: "F1" });
@@ -926,7 +930,8 @@ const settingsLoaded = api.getSettings().then((s) => {
   applySettings(s);
   applyChrome(settings.ui);
 }).catch(() => {});
-void ensureUnlocked().then(async () => {
+void unlockIfExists().then(async () => {
+  lockBtn.hidden = !(await api.vaultStatus()).exists;
   await refresh();
   if (await httpStore.load()) await refresh(); // requests saved before connections existed were moved into a connection of their own
   await loadWorkspaces();

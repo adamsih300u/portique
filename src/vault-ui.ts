@@ -3,7 +3,14 @@ import { field, h, modal } from "./ui";
 
 let pending: Promise<void> | null = null;
 
-/** Resolves once the vault is unlocked, prompting (and creating it on first run) as needed. */
+const listeners: (() => void)[] = [];
+/** Calls `f` whenever a vault comes into being, so the interface can show what only makes sense with one. */
+export const onVaultCreated = (f: () => void) => void listeners.push(f);
+
+/**
+ * Resolves once the vault is unlocked, prompting as needed. When no vault exists yet this offers to create
+ * one and rejects if the user declines, so whatever needed to store a secret can stop cleanly.
+ */
 export function ensureUnlocked(): Promise<void> {
   pending ??= (async () => {
     try {
@@ -11,13 +18,26 @@ export function ensureUnlocked(): Promise<void> {
         const s = await api.vaultStatus();
         if (s.unlocked) return;
         if (s.exists) await unlockDialog();
-        else await createDialog(s.minPasswordLen);
+        else if (await createDialog(s.minPasswordLen)) listeners.forEach((f) => f());
+        else throw new Error("No vault was created, so the secret was not saved.");
       }
     } finally {
       pending = null;
     }
   })();
   return pending;
+}
+
+/** Unlocks an existing vault at startup. With none yet there is nothing to ask: it is made on the first secret. */
+export async function unlockIfExists(): Promise<void> {
+  if ((await api.vaultStatus()).exists) await ensureUnlocked();
+}
+
+/** Locks the vault and asks for the password again. Without a vault there is nothing to lock. */
+export async function lockNow(): Promise<void> {
+  if (!(await api.vaultStatus()).exists) return;
+  await api.vaultLock();
+  await ensureUnlocked();
 }
 
 function enterSubmits(...inputs: HTMLInputElement[]) {
@@ -75,17 +95,19 @@ async function unlockDialog() {
   ], false, false);
 }
 
-async function createDialog(minLen: number) {
+/** Offers to create the vault; resolves true once it exists, false if the user chose not to. */
+async function createDialog(minLen: number): Promise<boolean> {
   const pw = h("input", { type: "password", autocomplete: "new-password" });
   const pw2 = h("input", { type: "password", autocomplete: "new-password" });
   enterSubmits(pw, pw2);
   const body = h("div", {},
-    h("p", {}, "Portique keeps saved passwords, key passphrases, and imported private keys in one encrypted vault file. Choose a master password to protect it."),
+    h("p", {}, "You are saving a secret. Portique keeps saved passwords, key passphrases, private keys and API tokens in one encrypted vault file, and creates it now because this is the first one. Choose a master password to protect it."),
     field(`Master password (at least ${minLen} characters)`, pw),
     strengthMeter(pw),
     field("Confirm master password", pw2),
     h("p", { class: "muted" }, "There is no recovery: if you forget this password, the vault contents cannot be decrypted. A long passphrase of several words is best."));
-  await modal("Create vault", body, [
+  const pressed = await modal("Create vault", body, [
+    { label: "Not now" },
     {
       label: "Create vault",
       primary: true,
@@ -96,11 +118,16 @@ async function createDialog(minLen: number) {
         pw.value = pw2.value = "";
       },
     },
-  ], false, false);
+  ]);
+  return pressed === "Create vault";
 }
 
 export async function changePasswordDialog() {
   const s = await api.vaultStatus();
+  if (!s.exists) {
+    await modal("No vault yet", h("p", {}, "The vault is created the first time you save a password, key or token. Until then there is no master password to change."), [{ label: "OK", primary: true }]);
+    return;
+  }
   const old = h("input", { type: "password", autocomplete: "current-password" });
   const nw = h("input", { type: "password", autocomplete: "new-password" });
   const nw2 = h("input", { type: "password", autocomplete: "new-password" });
