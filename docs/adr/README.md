@@ -52,5 +52,6 @@ Style, so a record reads in under a minute:
 | [0018](0018-commands-finish-with-markers-in-the-open-shell.md) | A command finishes with markers typed around it in the person's open shell | accepted |
 | [0019](0019-an-agents-first-step-needs-the-master-password.md) | An agent's first step in a session needs the master password | accepted |
 | [0020](0020-vault-created-on-first-secret.md) | The vault is created when the first secret is saved | accepted |
+| [0021](0021-saved-password-typed-after-confirmation.md) | A saved password is typed into a terminal only after a confirmation | accepted |
 
 The same decisions are summarised for agents under *Standing decisions* in [AGENTS.md](../../AGENTS.md).

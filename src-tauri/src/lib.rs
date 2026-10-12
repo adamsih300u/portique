@@ -291,6 +291,28 @@ fn has_password(profile_id: String) -> Res<bool> {
     vault::global().contains(&vault::password_account(&profile_id)).map_err(err)
 }
 
+/// What a person types for a password prompt: the password, then Enter.
+fn password_keystrokes(password: &str) -> Zeroizing<Vec<u8>> {
+    let mut b = Zeroizing::new(Vec::with_capacity(password.len() + 1));
+    b.extend_from_slice(password.as_bytes());
+    b.push(b'\r');
+    b
+}
+
+/// Types a profile's saved password, then Enter, into one of its open sessions. The password goes from the vault
+/// to the session inside Rust and never reaches the interface. Returns false when the profile has none saved.
+#[tauri::command]
+fn session_type_password(sessions: State<'_, Sessions>, id: String, profile_id: String) -> Res<bool> {
+    let Some(pw) = vault::global().get(&vault::password_account(&profile_id)).map_err(err)? else {
+        return Ok(false);
+    };
+    if pw.is_empty() {
+        return Ok(false);
+    }
+    // The channel takes ownership of a plain Vec, so one unwiped copy lives until the session writes it out.
+    Ok(sessions.send(&id, Ctl::Input(password_keystrokes(&pw).to_vec())))
+}
+
 // ---- keys -------------------------------------------------------------------
 
 #[tauri::command]
@@ -855,6 +877,7 @@ pub fn run() {
             set_password,
             copy_password,
             has_password,
+            session_type_password,
             list_keys,
             import_key,
             key_public,
@@ -898,4 +921,19 @@ pub fn run() {
                 tauri::Manager::state::<agent::Agents>(app).stop();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::password_keystrokes;
+
+    #[test]
+    fn password_is_followed_by_enter() {
+        assert_eq!(password_keystrokes("hunter2").as_slice(), b"hunter2\r");
+    }
+
+    #[test]
+    fn non_ascii_passwords_keep_their_utf8_bytes() {
+        assert_eq!(password_keystrokes("pä").as_slice(), "pä\r".as_bytes());
+    }
 }

@@ -25,7 +25,7 @@ What you see depends on what is open.
 
 | Group | What's in it | When |
 |---|---|---|
-| **This tab** | Split right, Split down, Close pane, Close tab, Copy last command output, Open file browser for this host, Appearance of *shell*…, Save *host* as a profile… | For the focused tab, and only the ones that apply: the splits and *Close pane* for a terminal tab (*Close pane* when it has more than one pane), the file browser for an SSH profile, *Appearance* for a local shell, *Save* for a quick-connect host. *Copy last command output* needs [shell integration](using-portique.md#terminals) |
+| **This tab** | Split right, Split down, Close pane, Close tab, Type the saved password, Copy last command output, Open file browser for this host, Appearance of *shell*…, Save *host* as a profile… | For the focused tab, and only the ones that apply: the splits and *Close pane* for a terminal tab (*Close pane* when it has more than one pane), *Type the saved password* for a connected SSH or Telnet profile (it asks before typing), the file browser for an SSH profile, *Appearance* for a local shell, *Save* for a quick-connect host. *Copy last command output* needs [shell integration](using-portique.md#terminals) |
 | **Terminal** | Find in terminal… | While the focused tab has a terminal (see [Find in the terminal](#find-in-the-terminal)) |
 | **Tabs** | *Switch to* each other open tab | Always |
 | **Connect** | Every saved profile, API connection and local shell | Always |

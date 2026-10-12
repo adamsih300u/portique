@@ -62,6 +62,7 @@ Choose **API** as the protocol, give it a base address, and work with that endpo
 - **Tabs.** Several tabs on one profile are numbered (`prod 1`, `prod 2`). Drag a tab to reorder it, middle-click to close it, and right-click for **Rename tab…** (and **Reset tab name**). Custom names and the order come back after a restart and in saved workspaces. When something finishes in a tab you aren't looking at (a command ends, or a file transfer completes), its title turns bold and accent-coloured and pulses a few times until you open it. There is no setting for it.
 - **Splits.** Split a terminal tab into panes with **Ctrl+Shift+D** (side by side) or **Ctrl+Shift+E** (stacked), or right-click the tab. Drag a divider to resize, and double-click it to even them out. File browsers and API tabs can't be split.
 - **Copy and paste.** Ctrl+Shift+C and V, or right-click, which copies a selection and otherwise pastes. **Shift+right-click** opens the pane menu with copy, paste and the prompt and shell-integration items.
+- **Type the saved password.** At a `sudo` or `su` prompt, press **Ctrl+Shift+S** (or choose *Type the saved password* in the palette) to type the profile's saved password and Enter into that terminal. Portique always asks first, naming the profile; **Enter** confirms and **Esc** cancels. The password goes from the vault to the connection without passing through the window, and it is the one saved for the profile, so a server whose `sudo` password differs from its login password needs the terminal. Pressing it away from a password prompt would type the password where it shows on screen, which is why the confirmation is always there.
 - **Text size.** Ctrl+wheel, or Ctrl+= and Ctrl+- (Ctrl+0 resets). The size runs from 8 to 40 and is remembered in that profile.
 - **Per-profile look.** Each profile has its own colour theme, font, size, cursor style and blink, and scrollback, and can switch on font ligatures for fonts that have them.
 
@@ -149,6 +150,7 @@ Press **F1**, or choose *Keyboard shortcuts* at the foot of the sidebar, for the
 | Ctrl+Shift+W | Close the pane, or the tab if it is the last pane |
 | Ctrl+Shift+B | Hide or show the sidebar. Drag its edge to resize (it never gets narrower than your longest name) and double-click the edge to reset |
 | Ctrl+Shift+C / V | Copy / paste in a terminal |
+| Ctrl+Shift+S | Type the profile's saved password into the terminal, after asking |
 | Ctrl+Shift+P | Command palette |
 | Ctrl+Shift+F | Find in the terminal's scrollback |
 | Ctrl+Shift+A | New API request |

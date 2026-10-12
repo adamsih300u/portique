@@ -692,6 +692,9 @@ function paletteItems(): PaletteItem[] {
   // Agents: what the focused terminal allows, and how to connect one.
   if (tab) {
     const term = tab.focused;
+    if (term.connected && (term.profile.protocol === "ssh" || term.profile.protocol === "telnet") && !isQuick(term.profile)) {
+      add("This tab", "type-password", "Type the saved password", () => void term.typeSavedPassword(), { hint: "Ctrl+Shift+S", keywords: "sudo su login secret" });
+    }
     if (term.agentSession) add("This tab", "agent-pause", term.controller === "user" ? "Hand the terminal back to the agent" : "Pause the agent (take over)", () => (term.controller === "user" ? term.handBack() : term.pauseAgent()), { keywords: "ai mcp" });
     if (term.profile.protocol !== "api" && !isQuick(term.profile)) add("This tab", "agent-access", `Agent access for ${term.profile.name}…`, () => void agentAccess(term.profile), { keywords: "ai mcp allow permit" });
   }
@@ -804,6 +807,7 @@ function matchKey(e: KeyboardEvent): (() => void) | null {
     if (e.code === "KeyW") return () => closePane(tab);
     if (e.code === "KeyD") return () => tab.split("row");
     if (e.code === "KeyE") return () => tab.split("col");
+    if (e.code === "KeyS") return () => void tab.focused.typeSavedPassword();
     // Prompt navigation only claims these keys once the shell is sending prompt marks.
     if ((e.code === "ArrowUp" || e.code === "ArrowDown") && tab.focused.hasMarks) {
       return () => tab.focused.jumpPrompt(e.code === "ArrowUp" ? -1 : 1);

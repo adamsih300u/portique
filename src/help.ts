@@ -20,6 +20,7 @@ const sections = (quakeKey: string, quakeOn: boolean): [string, Row[]][] => [
     ["Ctrl+Shift+C / V", "Copy / paste"],
     ["Right-click", "Copy selection, or paste"],
     ["Shift+Right-click", "Pane menu"],
+    ["Ctrl+Shift+S", "Type the saved password (asks first), for sudo"],
     ["Ctrl+Shift+↑ / ↓", "Previous / next prompt (needs shell integration)"],
     ["Enter / Esc", "While reconnecting: retry now / stop"],
     ["Ctrl+click", "Open a link"],
