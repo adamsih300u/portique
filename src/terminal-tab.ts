@@ -69,6 +69,8 @@ export class TerminalTab {
   /** Use the WebGL renderer (falls back to the DOM renderer if it is unavailable). */
   static gpu = true;
   private gl: WebglAddon | null = null;
+  /** The WebGL renderer's context, so it can be handed back when the renderer goes (see releaseGl). */
+  private glContext: WebGL2RenderingContext | null = null;
   private ligatures: LigaturesAddon | null = null;
   private cmds: Command[] = [];
   /** An automatic reconnect sequence is under way. */
@@ -230,21 +232,44 @@ export class TerminalTab {
   setGpu(on: boolean) {
     if (!this.term.element) return; // not opened yet; mount() applies the setting
     if (!on) {
-      this.gl?.dispose();
-      this.gl = null;
+      this.releaseGl();
     } else if (!this.gl) {
       try {
         const gl = new WebglAddon();
+        // The browser took the context back (it keeps only 16 per page): use the DOM renderer
+        // until the tab is shown again, when Tab.show() asks for the GPU once more.
         gl.onContextLoss(() => {
           gl.dispose();
-          if (this.gl === gl) this.gl = null;
+          if (this.gl !== gl) return;
+          this.gl = null;
+          this.glContext = null;
         });
+        const before = new Set(this.term.element.querySelectorAll("canvas"));
         this.term.loadAddon(gl);
         this.gl = gl;
+        // The addon keeps its context private; it is on one of the canvases the addon just added.
+        // Those already hold a context, so asking for "webgl2" never makes one (2D layers give null).
+        this.glContext = [...this.term.element.querySelectorAll("canvas")]
+          .filter((c) => !before.has(c))
+          .map((c) => c.getContext("webgl2"))
+          .find((c) => c !== null) ?? null;
       } catch {
         this.gl = null; // no WebGL here: the DOM renderer carries on
       }
     }
+  }
+
+  /**
+   * Drops the WebGL renderer and hands its context back to the browser now. The addon only removes
+   * its canvas, so the context would count against the page's limit until garbage collection, and
+   * the browser makes room by taking the context of the oldest terminal that is still open.
+   */
+  private releaseGl() {
+    // Dispose first, so the addon's own context-loss handling is gone before the context is.
+    this.gl?.dispose();
+    this.gl = null;
+    this.glContext?.getExtension("WEBGL_lose_context")?.loseContext();
+    this.glContext = null;
   }
 
   private setLigatures(on: boolean) {
@@ -646,6 +671,7 @@ export class TerminalTab {
     clearTimeout(this.quietTimer);
     this.ro.disconnect();
     if (this.sessionId) void api.close(this.sessionId);
+    this.releaseGl();
     this.term.dispose();
     this.el.remove();
   }

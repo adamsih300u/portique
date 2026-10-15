@@ -286,6 +286,7 @@ export class Tab {
     if (on) this.header.classList.remove("unread");
     this.header.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     if (on) {
+      if (TerminalTab.gpu) this.setGpu(true); // panes whose context the browser took back get it again
       this.refit();
       this.focusedLeaf.term.focus();
     }
