@@ -1,7 +1,7 @@
 # Keep terminals on the GPU renderer through a long session
 
 - **Branch:** `fix/webgl-context-leak`
-- **PR:** not opened yet
+- **PR:** [#75](https://github.com/adamsih300u/portique/pull/75)
 - **Status:** draft
 - **Author:** Claude (agent)
 
