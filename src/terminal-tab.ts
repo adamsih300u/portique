@@ -61,6 +61,8 @@ export class TerminalTab {
   private fit = new FitAddon();
   private searcher = new SearchAddon();
   private sessionId: string | null = null;
+  /** The session's event stream; see `detachChannel`. */
+  private channel: Channel<ArrayBuffer> | null = null;
   private ro: ResizeObserver;
   private lastSecrets: [string?, string?] = [];
   state: TabState = "connecting";
@@ -559,8 +561,10 @@ export class TerminalTab {
     this.cmds = [];
     this.setTunnels([]);
     this.lastSecrets = [password, passphrase];
+    this.detachChannel(); // late frames from the previous session must not land in this one
     const ch = new Channel<ArrayBuffer>();
     ch.onmessage = (buf) => this.onFrame(buf);
+    this.channel = ch;
     this.term.options.disableStdin = false;
     // Connecting again after an agent's session ended makes a session of the person's own.
     const attach = this.attachTo;
@@ -665,11 +669,22 @@ export class TerminalTab {
     this.setState("disconnected");
   }
 
+  /**
+   * Stops listening to the session's event stream. The page keeps a channel's handler until the
+   * backend ends the stream, and the handler reaches this whole terminal, so a closed tab would stay
+   * in memory with its screen and listeners for as long as the backend holds on to the stream.
+   */
+  private detachChannel() {
+    if (this.channel) this.channel.onmessage = () => {};
+    this.channel = null;
+  }
+
   dispose() {
     this.disposed = true;
     clearTimeout(this.retryTimer);
     clearTimeout(this.quietTimer);
     this.ro.disconnect();
+    this.detachChannel();
     if (this.sessionId) void api.close(this.sessionId);
     this.releaseGl();
     this.term.dispose();
