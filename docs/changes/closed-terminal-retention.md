@@ -1,7 +1,7 @@
 # Let closed terminals and the shortcuts panel go
 
 - **Branch:** `fix/mouse-lag-long-session`
-- **PR:** none yet
+- **PR:** [#77](https://github.com/adamsih300u/portique/pull/77)
 - **Status:** draft
 - **Author:** Claude (agent)
 
