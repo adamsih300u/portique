@@ -1,7 +1,7 @@
 # Add a Christmas look: "Noël" interface and "Portique Noël" terminal theme
 
 - **Branch:** `feat/noel-theme`
-- **PR:** <link, once open>
+- **PR:** https://github.com/adamsih300u/portique/pull/76
 - **Status:** draft
 - **Author:** Claude (agent)
 
