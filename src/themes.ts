@@ -11,6 +11,10 @@ export const BUILTIN_THEMES: Theme[] = [
   t("portique-ivoire", "Portique Ivoire", "#f7f3e8", "#2a2d36", "#8a6d2f", "#e3d9bd", [
     "#2b2f36", "#c0392b", "#27803f", "#9a6700", "#1f5fbf", "#8e44ad", "#0e7c86", "#d0d3d8",
     "#59616d", "#e0503f", "#2f9e4d", "#b57d0a", "#3a7be0", "#a35bc4", "#1798a3", "#ffffff"]),
+  // Christmas: snow-white text on pine, holly red, gold cursor. Pairs with the "Noël" interface look.
+  t("portique-noel", "Portique Noël", "#0b1f16", "#f4efe2", "#e0b85a", "#1f4a35", [
+    "#12291e", "#e85a62", "#6fcf7f", "#e8c46a", "#7fa8dc", "#d77fae", "#6fc8c0", "#e6e1d3",
+    "#3c5a4a", "#ff6b74", "#93e6a0", "#f5d88a", "#9cc2f0", "#eba0c8", "#92e0d8", "#ffffff"]),
   t("solarized-dark", "Solarized Dark", "#002b36", "#839496", "#93a1a1", "#073642", [
     "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
     "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3"]),

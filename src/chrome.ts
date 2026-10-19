@@ -11,6 +11,8 @@ const PRESETS: { name: string; ui: Omit<UiColours, "plainTabs"> }[] = [
   { name: "Bordeaux", ui: { side: "#2a1219", top: "#351720", content: "#1d0d13", accent: "#d9b26f" } },
   { name: "Forêt", ui: { side: "#101e19", top: "#162820", content: "#0c1713", accent: "#c9a45c" } },
   { name: "Ardoise", ui: { side: "#1c2128", top: "#242b35", content: "#14181d", accent: "#9fb8d0" } },
+  // Christmas: pine sidebar, cranberry top bar, gold accent.
+  { name: "Noël", ui: { side: "#0f2a1d", top: "#4a1119", content: "#0b1f16", accent: "#e0b85a" } },
 ];
 
 export const PRESET_NAMES = PRESETS.map((p) => p.name);
