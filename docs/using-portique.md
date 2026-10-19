@@ -103,9 +103,9 @@ It speaks SFTP only. A server without the SFTP subsystem isn't supported. You do
 
 ### Looks
 
-**Interface colours…** (gear menu or palette) chooses the look of the window: **Nuit**, **Ivoire**, **Bordeaux**, **Forêt** or **Ardoise**, or your own colours. Dialogs, menus and the palette follow it. Terminals follow their own **colour theme**, chosen per profile. By default each tab is tinted with its terminal theme's colour; tick *Tabs use these colours, not their terminal theme's* to keep every tab in the interface look.
+**Interface colours…** (gear menu or palette) chooses the look of the window: **Nuit**, **Ivoire**, **Bordeaux**, **Forêt**, **Ardoise** or the Christmas **Noël**, or your own colours. Dialogs, menus and the palette follow it. Terminals follow their own **colour theme**, chosen per profile. By default each tab is tinted with its terminal theme's colour; tick *Tabs use these colours, not their terminal theme's* to keep every tab in the interface look.
 
-**Colour themes…** (gear menu) lists the terminal themes and lets you build your own. Built-in ones include Portique Nuit and Ivoire, Solarized Dark, Dracula, Nord, Gruvbox Dark, Green Phosphor, Amber and **SGI IRIX**. A theme can carry its own font: SGI IRIX also selects the bundled *Irix Screen Mono* font (CC0, see `THIRD-PARTY-NOTICES.md` in the repository root). The font is applied when you pick the theme, and a profile can still override it.
+**Colour themes…** (gear menu) lists the terminal themes and lets you build your own. Built-in ones include Portique Nuit, Ivoire and Noël (Christmas), Solarized Dark, Dracula, Nord, Gruvbox Dark, Green Phosphor, Amber and **SGI IRIX**. A theme can carry its own font: SGI IRIX also selects the bundled *Irix Screen Mono* font (CC0, see `THIRD-PARTY-NOTICES.md` in the repository root). The font is applied when you pick the theme, and a profile can still override it.
 
 ### The gear menu
 
