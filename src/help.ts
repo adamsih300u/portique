@@ -61,11 +61,15 @@ const sections = (quakeKey: string, quakeOn: boolean): [string, Row[]][] => [
 ];
 
 let open: HTMLElement | null = null;
+/** Takes down the listeners that close the open panel. */
+let unlisten: (() => void) | null = null;
 
-/** Closes the shortcuts panel if it is showing. */
+/** Closes the shortcuts panel if it is showing, however it was asked to close (F1, the link, Escape, a click away). */
 function closeHelp() {
   open?.remove();
   open = null;
+  unlisten?.();
+  unlisten = null;
 }
 
 /** Shows (or hides) the shortcuts panel, anchored to the bottom-left above the sidebar footer. */
@@ -85,9 +89,11 @@ export function toggleHelp(quakeKey: string, quakeOn: boolean) {
     if (e.type === "keydown" && (e as KeyboardEvent).key !== "Escape") return;
     if (e.type === "mousedown" && (panel.contains(e.target as Node) || (e.target as HTMLElement).closest?.(".help-link"))) return;
     closeHelp();
-    window.removeEventListener("mousedown", away, true);
-    window.removeEventListener("keydown", away, true);
   };
   window.addEventListener("mousedown", away, true);
   window.addEventListener("keydown", away, true);
+  unlisten = () => {
+    window.removeEventListener("mousedown", away, true);
+    window.removeEventListener("keydown", away, true);
+  };
 }
