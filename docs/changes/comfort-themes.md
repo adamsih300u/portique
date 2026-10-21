@@ -1,7 +1,7 @@
 # Bundle four soft terminal themes: Ambre doux, Everforest Dark, Kanagawa, Gruvbox Light
 
 - **Branch:** `feat/comfort-themes`
-- **PR:** <link, once open>
+- **PR:** https://github.com/adamsih300u/portique/pull/78
 - **Status:** draft
 - **Author:** Claude (agent)
 
