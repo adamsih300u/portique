@@ -28,6 +28,14 @@ const RETRY_DELAYS = [1, 2, 4, 8, 15, 30, 30, 30, 30, 30];
 /** Errors that retrying cannot fix; the user has to look at them. */
 const PERMANENT = /authenticat|rejected|HOST KEY|not accepted|not found|no key|needs a saved/i;
 const MAX_CLIPBOARD = 1_000_000;
+/**
+ * What a program may have switched on in the terminal and never switched off because its connection died under it:
+ * the alternate screen, mouse reporting (every encoding), focus reports, bracketed paste, application keys, a hidden
+ * cursor. Left on, the next shell is sent the mouse reports as text.
+ */
+const RESET_MODES =
+  "\x1b[?1049l\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
+  "\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b>\x1b[?25h";
 
 /** One prompt/command/output triple recorded from OSC 133 shell-integration marks. */
 interface Command {
@@ -612,6 +620,7 @@ export class TerminalTab {
         this.takeFocusIfIdle();
         break;
       case "lost":
+        this.term.write(RESET_MODES);
         if (this.profile.autoReconnect) this.scheduleReconnect("Connection lost");
         else this.ended("\r\n\x1b[2m[Connection lost. Press Enter to reconnect]\x1b[0m\r\n");
         break;
@@ -665,7 +674,7 @@ export class TerminalTab {
     this.attempt = 0;
     this.tunnels = [];
     this.onTunnels();
-    this.term.write(text);
+    this.term.write(RESET_MODES + text);
     this.setState("disconnected");
   }
 
