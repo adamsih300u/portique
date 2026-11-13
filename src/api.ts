@@ -377,6 +377,9 @@ export const api = {
     guarded(() => invoke<void>("set_password", { profileId, password })),
   copyPassword: (fromId: string, toId: string) => guarded(() => invoke<void>("copy_password", { fromId, toId })),
   hasPassword: (profileId: string) => guarded(() => invoke<boolean>("has_password", { profileId })),
+  /** Types the profile's saved password and Enter into one of its sessions; Rust reads it. False if none is saved. */
+  typePassword: (id: string, profileId: string) =>
+    guarded(() => invoke<boolean>("session_type_password", { id, profileId })),
   listKeys: () => invoke<KeyInfo[]>("list_keys"),
   keyPublic: (id: string) => guarded(() => invoke<PublicKeyInfo>("key_public", { id })),
   importKey: (name: string, pem: string, passphrase?: string) =>

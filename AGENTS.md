@@ -86,5 +86,6 @@ Decisions that still bind new work. Each links to its record in [docs/adr/](docs
 - **An agent's command ends with markers typed around it in the open shell** (POSIX shells only); the person can see it and take the keyboard. The activity log stays in memory. → [ADR-0018](docs/adr/0018-commands-finish-with-markers-in-the-open-shell.md)
 - **An agent's first step in a session needs the master password** (while a vault exists and the one setting is on): it is checked in Rust, a plain answer cannot grant it, and locking the vault ends it. → [ADR-0019](docs/adr/0019-an-agents-first-step-needs-the-master-password.md)
 - **The vault is created when the first secret is saved**, not at first launch; a missing vault reads as empty. → [ADR-0020](docs/adr/0020-vault-created-on-first-secret.md)
+- **A saved password is typed into a terminal only after a confirmation**, and only by `session_type_password` in Rust; no agent tool, prompt detection or retry types it unasked. → [ADR-0021](docs/adr/0021-saved-password-typed-after-confirmation.md)
 - The interface stays **quiet**: context menus and shortcuts over permanent buttons.
 - The app was renamed from Termix to **Portique**; the frozen on-disk names above are the reason some `termix` strings remain.

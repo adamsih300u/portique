@@ -11,7 +11,7 @@ import { isTerminalReply } from "./agent-core";
 import { api, Channel, type Profile } from "./api";
 import { effectiveFont, getTheme, xtermTheme } from "./themes";
 import { askLoginSecret, confirmHostKey } from "./host-prompts";
-import { toBytes } from "./ui";
+import { h, modal, toBytes } from "./ui";
 import { ensureUnlocked } from "./vault-ui";
 
 const DEFAULT_FONT_SIZE = 14;
@@ -525,6 +525,31 @@ export class TerminalTab {
     this.term.paste(text.replace(/\r?\n/g, "\r"));
     if (enter) this.send(toBytes("\r"));
     this.term.focus();
+  }
+
+  /**
+   * Types the profile's saved password and Enter into the session (for sudo, su and the like), once the person
+   * confirms. Rust reads the password from the vault and sends it, so the page never holds it.
+   */
+  async typeSavedPassword() {
+    const id = this.session;
+    if (!id) return;
+    const name = this.profile.name;
+    if (!(await api.hasPassword(this.profile.id).catch(() => false))) {
+      const none = modal("No saved password", h("p", {}, `${name} has no saved password. Add one in the profile's editor.`), [{ label: "OK", primary: true }]);
+      document.querySelector<HTMLElement>(".modal-buttons .primary")?.focus();
+      await none;
+      this.term.focus();
+      return;
+    }
+    const ask = modal("Type saved password?", h("p", {}, `Type the saved password for ${name} into this terminal and press Enter.`),
+      [{ label: "Cancel" }, { label: "Type password", primary: true }]);
+    document.querySelector<HTMLElement>(".modal-buttons .primary")?.focus(); // Enter confirms, Esc cancels
+    const answer = await ask;
+    this.term.focus();
+    if (answer !== "Type password" || this.session !== id) return; // cancelled, or the connection changed meanwhile
+    this.takeOver();
+    await api.typePassword(id, this.profile.id).catch(() => {});
   }
 
   async paste() {
