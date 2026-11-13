@@ -20,7 +20,7 @@ jobs:
   npm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -29,7 +29,7 @@ jobs:
   cargo:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: cargo install cargo-audit --locked
       # RUSTSEC-2023-0071 (Marvin timing attack on RSA private-key operations) is accepted: it affects the
       # `rsa` crate that `russh` pulls in, no fixed release exists, and we need RSA for imported keys and
