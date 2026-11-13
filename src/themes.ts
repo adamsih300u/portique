@@ -40,6 +40,21 @@ export const BUILTIN_THEMES: Theme[] = [
   t("amber", "Amber", "#140c00", "#ffb000", "#ffb000", "#4a3000", [
     "#140c00", "#cc5500", "#ffb000", "#ffd060", "#cc8800", "#e69500", "#d9a030", "#ffb000",
     "#6b4a00", "#ff7a1a", "#ffc933", "#ffe08a", "#ffa500", "#ffb733", "#ffc866", "#fff0c8"]),
+  // Amber at about 80% brightness, for long evenings.
+  t("ambre-doux", "Ambre doux", "#140c00", "#cc8d00", "#cc8d00", "#3d2800", [
+    "#140c00", "#c85c12", "#cc8d00", "#cca64d", "#ab7300", "#b87700", "#ae8026", "#cc8d00",
+    "#5a3e00", "#cc6215", "#cca129", "#ccb36e", "#cc8400", "#cc9229", "#cca052", "#ccc0a0"]),
+  // Soft, warm palettes for long sessions. Everforest (sainnhe), Kanagawa (rebelot) and Gruvbox (morhetz) are MIT-licensed.
+  t("everforest-dark", "Everforest Dark", "#2d353b", "#d3c6aa", "#d3c6aa", "#475258", [
+    "#343f44", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#d3c6aa",
+    "#859289", "#f08b8d", "#b5cf8c", "#e6c88a", "#8cc8c0", "#e2a6c2", "#90cd9f", "#e6dcc2"]),
+  t("kanagawa", "Kanagawa", "#1f1f28", "#dcd7ba", "#c8c093", "#2d4f67", [
+    "#16161d", "#c34043", "#76946a", "#c0a36e", "#7e9cd8", "#957fb8", "#6a9589", "#c8c093",
+    "#727169", "#e82424", "#98bb6c", "#e6c384", "#7fb4ca", "#938aa9", "#7aa89f", "#dcd7ba"]),
+  // Normal colours use Gruvbox's darker "faded" accents so they read on the cream background.
+  t("gruvbox-light", "Gruvbox Light", "#fbf1c7", "#3c3836", "#3c3836", "#ebdbb2", [
+    "#3c3836", "#9d0006", "#79740e", "#b57614", "#076678", "#8f3f71", "#427b58", "#d5c4a1",
+    "#7c6f64", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#ebdbb2"]),
 ];
 
 let userThemes: Theme[] = [];
